@@ -1,0 +1,18 @@
+[package]
+name = "hikari-phone-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+native-pjsip = ["telephony-pjsip/native-pjsip"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+telephony-core = { path = "../telephony-core" }
+telephony-pjsip = { path = "../telephony-pjsip" }
+
+[lints]
+workspace = true
