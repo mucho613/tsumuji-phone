@@ -25,9 +25,14 @@ native-pjsip = ["telephony-pjsip/native-pjsip"]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
-keyring = { version = "3", features = ["sync-secret-service"] }
 telephony-core = { path = "../crates/telephony-core" }
 telephony-pjsip = { path = "../crates/telephony-pjsip" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
 
 [lints]
 workspace = true

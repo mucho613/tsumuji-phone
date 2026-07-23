@@ -1,8 +1,9 @@
 # Hikari Phone
 
 RT-500KI の「ひかり電話」を同一 LAN 内から利用する、個人向けの
-デスクトップ／Android クライアントです。初期実装は Ubuntu 24.04 を対象に、
-Rust、Tauri 2、React、PJSIP 2.17 で構成します。
+デスクトップ／Android クライアントです。現在のデスクトップ実装は Ubuntu
+24.04 と Windows 11 x64 を対象に、Rust、Tauri 2、React、PJSIP 2.17 で
+構成します。
 
 > 現在は初期開発段階です。緊急通報（110、118、119）には対応せず、アプリ側でも
 > 発信を拒否します。既存の電話機を緊急時に利用できる状態で維持してください。
@@ -48,6 +49,9 @@ cargo run -p hikari-phone-cli -- backend
 source target/pjproject-env.sh
 npm run tauri dev -- --features native-pjsip
 ```
+
+Windows 11 での環境構築と PJSIP ビルドは
+[docs/windows-development.md](docs/windows-development.md) を参照してください。
 
 RT-500KI の設定は [docs/rt500ki-setup.md](docs/rt500ki-setup.md)、
 設計上の境界は [docs/architecture.md](docs/architecture.md) を参照してください。
