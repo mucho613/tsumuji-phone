@@ -10,7 +10,7 @@ struct hp_engine {
     pjsua_call_id call_id;
     hp_event_callback callback;
     void *user_data;
-    char server[128];
+    char server[256];
     char last_error[256];
     int started;
     int muted;
@@ -94,6 +94,7 @@ static void hp_on_incoming_call(pjsua_acc_id account_id,
 static void hp_on_call_state(pjsua_call_id call_id, pjsip_event *event) {
     pjsua_call_info info;
     char peer[PJSIP_MAX_URL_SIZE];
+    char status_text[96];
     char reason[128];
     PJ_UNUSED_ARG(event);
 
@@ -102,7 +103,8 @@ static void hp_on_call_state(pjsua_call_id call_id, pjsip_event *event) {
         return;
     }
     hp_copy_pj_string(peer, sizeof(peer), &info.remote_info);
-    hp_copy_pj_string(reason, sizeof(reason), &info.last_status_text);
+    hp_copy_pj_string(status_text, sizeof(status_text), &info.last_status_text);
+    snprintf(reason, sizeof(reason), "%d %s", info.last_status, status_text);
 
     switch (info.state) {
     case PJSIP_INV_STATE_CALLING:
@@ -192,12 +194,12 @@ int hp_engine_start(const hp_config *config,
     pjsua_acc_config account_config;
     pjsua_transport_id transport_id;
     pj_status_t status;
-    char identity[256];
-    char registrar[256];
+    char identity[512];
+    char registrar[512];
 
     if (config == NULL || callback == NULL || out_engine == NULL ||
         config->server == NULL || config->local_address == NULL ||
-        config->extension == NULL || config->password == NULL ||
+        config->user_id == NULL || config->password == NULL ||
         active_engine != NULL) {
         return -1;
     }
@@ -272,7 +274,7 @@ int hp_engine_start(const hp_config *config,
     snprintf(identity,
              sizeof(identity),
              "sip:%s@%s",
-             config->extension,
+             config->user_id,
              config->server);
     snprintf(registrar, sizeof(registrar), "sip:%s", config->server);
     account_config.id = hp_pj_str(identity);
@@ -281,7 +283,7 @@ int hp_engine_start(const hp_config *config,
     account_config.cred_count = 1;
     account_config.cred_info[0].realm = hp_pj_str("*");
     account_config.cred_info[0].scheme = hp_pj_str("Digest");
-    account_config.cred_info[0].username = hp_pj_str(config->extension);
+    account_config.cred_info[0].username = hp_pj_str(config->user_id);
     account_config.cred_info[0].data_type = PJSIP_CRED_DATA_PLAIN_PASSWD;
     account_config.cred_info[0].data = hp_pj_str(config->password);
     account_config.rtp_cfg.port = config->rtp_port_start;
@@ -322,8 +324,9 @@ int hp_engine_stop(hp_engine *engine) {
 }
 
 int hp_engine_dial(hp_engine *engine, const char *number) {
-    char destination[256];
+    char destination[512];
     pj_str_t uri;
+    pjsua_call_setting call_setting;
     pj_status_t status;
     if (engine == NULL || number == NULL ||
         engine->call_id != PJSUA_INVALID_ID) {
@@ -331,9 +334,13 @@ int hp_engine_dial(hp_engine *engine, const char *number) {
     }
     snprintf(destination, sizeof(destination), "sip:%s@%s", number, engine->server);
     uri = hp_pj_str(destination);
+    pjsua_call_setting_default(&call_setting);
+    call_setting.aud_cnt = 1;
+    call_setting.vid_cnt = 0;
+    call_setting.txt_cnt = 0;
     status = pjsua_call_make_call(engine->account_id,
                                   &uri,
-                                  NULL,
+                                  &call_setting,
                                   NULL,
                                   NULL,
                                   &engine->call_id);

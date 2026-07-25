@@ -33,6 +33,7 @@ type PhoneState = {
   call: Call | null;
   muted: boolean;
   lastError: string | null;
+  lastCallReason: string | null;
 };
 
 const initialPhoneState: PhoneState = {
@@ -40,6 +41,7 @@ const initialPhoneState: PhoneState = {
   call: null,
   muted: false,
   lastError: null,
+  lastCallReason: null,
 };
 
 const keys = [
@@ -69,8 +71,9 @@ function App() {
   const [tab, setTab] = useState<"phone" | "settings">("phone");
   const [phoneState, setPhoneState] = useState(initialPhoneState);
   const [number, setNumber] = useState("");
-  const [server, setServer] = useState("192.168.1.1");
-  const [localAddress, setLocalAddress] = useState("192.168.1.252");
+  const [server, setServer] = useState("");
+  const [localAddress, setLocalAddress] = useState("");
+  const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -119,6 +122,7 @@ function App() {
         request: {
           server,
           localAddress,
+          userId,
           password: password || null,
         },
       }),
@@ -269,7 +273,7 @@ function App() {
             <section>
               <h2>接続</h2>
               <label>
-                RT-500KI
+                SIPサーバー
                 <input
                   value={server}
                   onChange={(event) => setServer(event.currentTarget.value)}
@@ -277,7 +281,7 @@ function App() {
                 />
               </label>
               <label>
-                この端末のLANアドレス
+                この端末のIPアドレス
                 <input
                   value={localAddress}
                   onChange={(event) => setLocalAddress(event.currentTarget.value)}
@@ -285,13 +289,37 @@ function App() {
                 />
               </label>
               <label>
-                内線3のパスワード
+                ユーザID
+                <input
+                  value={userId}
+                  minLength={1}
+                  maxLength={32}
+                  pattern="[A-Za-z0-9._~-]+"
+                  onChange={(event) =>
+                    setUserId(
+                      event.currentTarget.value
+                        .replace(/[^A-Za-z0-9._~-]/g, "")
+                        .slice(0, 32),
+                    )
+                  }
+                  required
+                />
+              </label>
+              <label>
+                パスワード
                 <input
                   type="password"
-                  autoComplete="new-password"
+                  autoComplete="current-password"
                   value={password}
-                  minLength={32}
-                  onChange={(event) => setPassword(event.currentTarget.value)}
+                  minLength={1}
+                  maxLength={128}
+                  onChange={(event) =>
+                    setPassword(
+                      event.currentTarget.value
+                        .replace(/[^\x21-\x7e]/g, "")
+                        .slice(0, 128),
+                    )
+                  }
                   placeholder="保存済みの場合は空欄"
                 />
               </label>

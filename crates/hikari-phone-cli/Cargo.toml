@@ -14,5 +14,8 @@ clap = { version = "4", features = ["derive"] }
 telephony-core = { path = "../telephony-core" }
 telephony-pjsip = { path = "../telephony-pjsip" }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
 [lints]
 workspace = true

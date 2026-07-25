@@ -1,7 +1,7 @@
 #ifndef HIKARI_PHONE_PJ_CONFIG_SITE_H
 #define HIKARI_PHONE_PJ_CONFIG_SITE_H
 
-/* The RT-500KI MVP is audio-only and negotiates PCMU at runtime. */
+/* The client is audio-only and negotiates PCMU at runtime. */
 #define PJMEDIA_HAS_VIDEO 0
 #define PJMEDIA_HAS_L16_CODEC 0
 #define PJMEDIA_HAS_GSM_CODEC 0

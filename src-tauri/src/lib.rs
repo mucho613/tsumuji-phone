@@ -10,7 +10,7 @@ use telephony_core::{AccountConfig, PhoneSnapshot, TelephonyEngine};
 use telephony_pjsip::PjsipEngine;
 
 const KEYRING_SERVICE: &str = "app.hikari-phone.local";
-const KEYRING_USER: &str = "extension-3";
+const KEYRING_ACCOUNT: &str = "sip-account";
 const BLOCKED_NUMBERS: [&str; 3] = ["110", "118", "119"];
 
 struct Controller {
@@ -30,6 +30,7 @@ impl Default for Controller {
 struct StartRequest {
     server: String,
     local_address: String,
+    user_id: String,
     password: Option<String>,
 }
 
@@ -52,18 +53,14 @@ fn start_waiting(
     request: StartRequest,
     controller: State<'_, Controller>,
 ) -> Result<PhoneSnapshot, String> {
-    let password = match request.password {
-        Some(password) if !password.is_empty() => {
-            keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
-                .map_err(backend_error)?
-                .set_password(&password)
-                .map_err(backend_error)?;
-            password
-        }
-        _ => keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
-            .map_err(backend_error)?
+    let credential =
+        keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).map_err(backend_error)?;
+    let supplied_password = request.password.filter(|password| !password.is_empty());
+    let password = match supplied_password.as_ref() {
+        Some(password) => password.clone(),
+        None => credential
             .get_password()
-            .map_err(|_| "ひかり電話のパスワードを入力してください".to_owned())?,
+            .map_err(|_| "パスワードを入力してください".to_owned())?,
     };
     let config = AccountConfig {
         server: request.server,
@@ -71,9 +68,13 @@ fn start_waiting(
         sip_port: 5060,
         rtp_port_start: 40_000,
         rtp_port_end: 40_009,
-        extension: "3".into(),
+        user_id: request.user_id,
         password,
     };
+    config.validate().map_err(backend_error)?;
+    if let Some(password) = supplied_password {
+        credential.set_password(&password).map_err(backend_error)?;
+    }
     let mut engine = controller.engine.lock().map_err(backend_error)?;
     engine.start(&config).map_err(backend_error)?;
     Ok(engine.snapshot())
@@ -132,7 +133,7 @@ fn set_muted(muted: bool, controller: State<'_, Controller>) -> Result<PhoneSnap
 
 #[tauri::command]
 fn reset_credentials() -> Result<(), String> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
         .map_err(backend_error)?
         .delete_credential()
         .map_err(backend_error)

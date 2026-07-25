@@ -10,34 +10,44 @@ pub struct AccountConfig {
     pub sip_port: u16,
     pub rtp_port_start: u16,
     pub rtp_port_end: u16,
-    pub extension: String,
+    pub user_id: String,
     #[serde(skip_serializing)]
     pub password: String,
 }
 
 impl AccountConfig {
-    /// Validate the RT-500KI-specific constraints used by the first release.
+    /// Validate the SIP account and local media constraints used by the app.
     ///
     /// # Errors
     ///
     /// Returns [`EngineError::InvalidConfig`] when an address, credential,
-    /// extension, or fixed port constraint is invalid.
+    /// user ID, or fixed port constraint is invalid.
     pub fn validate(&self) -> Result<(), EngineError> {
-        let server = self
-            .server
-            .parse::<Ipv4Addr>()
-            .map_err(|_| EngineError::InvalidConfig("server must be an IPv4 address".into()))?;
+        if !is_valid_server(&self.server) {
+            return Err(EngineError::InvalidConfig(
+                "server must be an IPv4 address or DNS hostname".into(),
+            ));
+        }
         let local_address = self.local_address.parse::<Ipv4Addr>().map_err(|_| {
             EngineError::InvalidConfig("local address must be an IPv4 address".into())
         })?;
-        if !server.is_private() || !local_address.is_private() || server == local_address {
+        if !is_private_or_tailscale(local_address) {
             return Err(EngineError::InvalidConfig(
-                "server and local address must be distinct private LAN addresses".into(),
+                "local address must be a private LAN or Tailscale IPv4 address".into(),
             ));
         }
-        if self.extension != "3" {
+        if self
+            .server
+            .parse::<Ipv4Addr>()
+            .is_ok_and(|server| server == local_address)
+        {
             return Err(EngineError::InvalidConfig(
-                "the initial release only supports extension 3".into(),
+                "server and local address must be distinct".into(),
+            ));
+        }
+        if !is_valid_user_id(&self.user_id) {
+            return Err(EngineError::InvalidConfig(
+                "user ID must contain 1 to 32 ASCII letters, digits, or -._~".into(),
             ));
         }
         if self.sip_port == 0 {
@@ -53,13 +63,53 @@ impl AccountConfig {
                 "RTP range must begin on an even port and contain at least 10 ports".into(),
             ));
         }
-        if self.password.chars().count() < 32 {
+        if !(1..=128).contains(&self.password.len())
+            || !self.password.bytes().all(|byte| byte.is_ascii_graphic())
+        {
             return Err(EngineError::InvalidConfig(
-                "password must contain at least 32 characters".into(),
+                "password must contain 1 to 128 printable ASCII characters without spaces".into(),
             ));
         }
         Ok(())
     }
+}
+
+fn is_private_or_tailscale(address: Ipv4Addr) -> bool {
+    let octets = address.octets();
+    address.is_private() || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+}
+
+fn is_valid_user_id(user_id: &str) -> bool {
+    (1..=32).contains(&user_id.len())
+        && user_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~'))
+}
+
+fn is_valid_server(server: &str) -> bool {
+    if let Ok(address) = server.parse::<Ipv4Addr>() {
+        return !address.is_unspecified()
+            && !address.is_multicast()
+            && address != Ipv4Addr::BROADCAST;
+    }
+
+    let hostname = server.strip_suffix('.').unwrap_or(server);
+    !hostname.is_empty()
+        && hostname.len() <= 253
+        && hostname.split('.').all(|label| {
+            (1..=63).contains(&label.len())
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                && label
+                    .as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && label
+                    .as_bytes()
+                    .last()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+        })
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +156,7 @@ pub struct PhoneSnapshot {
     pub call: Option<CallSnapshot>,
     pub muted: bool,
     pub last_error: Option<String>,
+    pub last_call_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +272,7 @@ impl StateMachine {
             }
             EngineEvent::IncomingCall { id, peer } => {
                 self.ensure_idle("receive a call")?;
+                self.snapshot.last_call_reason = None;
                 self.snapshot.call = Some(CallSnapshot {
                     id,
                     peer,
@@ -236,6 +288,7 @@ impl StateMachine {
                         "outgoing calls require registration".into(),
                     ));
                 }
+                self.snapshot.last_call_reason = None;
                 self.snapshot.call = Some(CallSnapshot {
                     id,
                     peer,
@@ -250,10 +303,11 @@ impl StateMachine {
             EngineEvent::CallActive { id } => {
                 self.call_mut(id)?.phase = CallPhase::Active;
             }
-            EngineEvent::CallEnded { id, .. } => {
+            EngineEvent::CallEnded { id, reason } => {
                 self.call_mut(id)?;
                 self.snapshot.call = None;
                 self.snapshot.muted = false;
+                self.snapshot.last_call_reason = Some(reason);
             }
             EngineEvent::Muted(muted) => {
                 if self.snapshot.call.as_ref().map(|call| call.phase) != Some(CallPhase::Active) {
@@ -330,6 +384,10 @@ mod tests {
             .unwrap();
         assert_eq!(state.snapshot().call, None);
         assert!(!state.snapshot().muted);
+        assert_eq!(
+            state.snapshot().last_call_reason.as_deref(),
+            Some("remote hangup")
+        );
     }
 
     #[test]
@@ -351,29 +409,81 @@ mod tests {
     }
 
     #[test]
-    fn validates_rt500_port_range() {
+    fn validates_rtp_port_range() {
         let config = AccountConfig {
-            server: "192.168.1.1".into(),
-            local_address: "192.168.1.252".into(),
+            server: "asterisk.example.ts.net".into(),
+            local_address: "100.100.1.1".into(),
             sip_port: 5060,
             rtp_port_start: 40_001,
             rtp_port_end: 40_009,
-            extension: "3".into(),
-            password: "0123456789abcdef0123456789abcdef".into(),
+            user_id: "ts-line3".into(),
+            password: "secret".into(),
         };
         assert!(config.validate().is_err());
     }
 
     #[test]
-    fn rejects_non_lan_bind_address() {
+    fn rejects_non_lan_or_tailscale_bind_address() {
         let config = AccountConfig {
-            server: "192.168.1.1".into(),
-            local_address: "100.100.1.1".into(),
+            server: "asterisk.example.ts.net".into(),
+            local_address: "8.8.8.8".into(),
             sip_port: 5060,
             rtp_port_start: 40_000,
             rtp_port_end: 40_009,
-            extension: "3".into(),
-            password: "0123456789abcdef0123456789abcdef".into(),
+            user_id: "ts-line3".into(),
+            password: "secret".into(),
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_asterisk_over_tailscale() {
+        let config = AccountConfig {
+            server: "asterisk.example.ts.net".into(),
+            local_address: "100.100.1.5".into(),
+            sip_port: 5060,
+            rtp_port_start: 40_000,
+            rtp_port_end: 40_009,
+            user_id: "ts-line3".into(),
+            password: "a1b2c3!@".into(),
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_user_id_and_password() {
+        let mut config = AccountConfig {
+            server: "asterisk.example.ts.net".into(),
+            local_address: "100.100.1.5".into(),
+            sip_port: 5060,
+            rtp_port_start: 40_000,
+            rtp_port_end: 40_009,
+            user_id: "phone@3".into(),
+            password: "a".into(),
+        };
+        assert!(config.validate().is_err());
+
+        config.user_id = "user id".into();
+        assert!(config.validate().is_err());
+
+        config.user_id = "ts-line3".into();
+        config.password = String::new();
+        assert!(config.validate().is_err());
+
+        config.password = "contains space".into();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_server_hostname() {
+        let config = AccountConfig {
+            server: "-asterisk.example.ts.net".into(),
+            local_address: "100.100.1.5".into(),
+            sip_port: 5060,
+            rtp_port_start: 40_000,
+            rtp_port_end: 40_009,
+            user_id: "ts-line3".into(),
+            password: "secret".into(),
         };
         assert!(config.validate().is_err());
     }

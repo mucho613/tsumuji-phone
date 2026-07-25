@@ -12,7 +12,7 @@ typedef struct hp_engine hp_engine;
 typedef struct hp_config {
     const char *server;
     const char *local_address;
-    const char *extension;
+    const char *user_id;
     const char *password;
     uint16_t sip_port;
     uint16_t rtp_port_start;

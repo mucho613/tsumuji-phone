@@ -14,7 +14,7 @@ struct HpEngine {
 struct HpConfig {
     server: *const c_char,
     local_address: *const c_char,
-    extension: *const c_char,
+    user_id: *const c_char,
     password: *const c_char,
     sip_port: u16,
     rtp_port_start: u16,
@@ -81,12 +81,12 @@ impl NativeEngine {
         }
         let server = to_c_string(&config.server)?;
         let local_address = to_c_string(&config.local_address)?;
-        let extension = to_c_string(&config.extension)?;
+        let user_id = to_c_string(&config.user_id)?;
         let password = to_c_string(&config.password)?;
         let native_config = HpConfig {
             server: server.as_ptr(),
             local_address: local_address.as_ptr(),
-            extension: extension.as_ptr(),
+            user_id: user_id.as_ptr(),
             password: password.as_ptr(),
             sip_port: config.sip_port,
             rtp_port_start: config.rtp_port_start,
