@@ -1536,29 +1536,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "hikari-phone"
-version = "0.1.0"
-dependencies = [
- "keyring",
- "serde",
- "tauri",
- "tauri-build",
- "tauri-plugin-single-instance",
- "telephony-core",
- "telephony-pjsip",
-]
-
-[[package]]
-name = "hikari-phone-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "keyring",
- "telephony-core",
- "telephony-pjsip",
-]
-
-[[package]]
 name = "html5ever"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4005,6 +3982,29 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tsumuji-phone"
+version = "0.1.0"
+dependencies = [
+ "keyring",
+ "serde",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-single-instance",
+ "telephony-core",
+ "telephony-pjsip",
+]
+
+[[package]]
+name = "tsumuji-phone-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "keyring",
+ "telephony-core",
+ "telephony-pjsip",
+]
 
 [[package]]
 name = "typeid"

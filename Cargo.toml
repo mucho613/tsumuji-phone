@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/hikari-phone-cli",
+    "crates/tsumuji-phone-cli",
     "crates/telephony-core",
     "crates/telephony-pjsip",
     "src-tauri",

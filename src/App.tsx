@@ -135,7 +135,7 @@ function App() {
         <div className="brand-mark">
           <PhoneCall size={19} strokeWidth={2.2} />
         </div>
-        <h1>Hikari Phone</h1>
+        <h1>Tsumuji Phone</h1>
         <div className={`status status-${statusTone}`}>
           <span aria-hidden="true" />
           {registrationLabels[phoneState.registration]}

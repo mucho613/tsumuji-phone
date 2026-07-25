@@ -14,7 +14,7 @@ target
 *.local
 
 # Local pjproject build/install output
-vendor/pjproject/build-hikari-phone
+vendor/pjproject/build-tsumuji-phone
 target/pjproject-env.sh
 
 # Editor directories and files

@@ -1,8 +1,8 @@
 [package]
-name = "hikari-phone"
+name = "tsumuji-phone"
 version.workspace = true
-description = "Asterisk SIP client for Hikari Phone"
-authors = ["Hikari Phone contributors"]
+description = "Asterisk SIP client for Tsumuji Phone"
+authors = ["Tsumuji Phone contributors"]
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,7 @@ rust-version.workspace = true
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "hikari_phone_lib"
+name = "tsumuji_phone_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

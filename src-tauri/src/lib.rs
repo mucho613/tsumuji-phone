@@ -9,7 +9,8 @@ use tauri::{
 use telephony_core::{AccountConfig, PhoneSnapshot, TelephonyEngine};
 use telephony_pjsip::PjsipEngine;
 
-const KEYRING_SERVICE: &str = "app.hikari-phone.local";
+const KEYRING_SERVICE: &str = "app.tsumuji-phone.local";
+const LEGACY_KEYRING_SERVICE: &str = "app.hikari-phone.local";
 const KEYRING_ACCOUNT: &str = "sip-account";
 const BLOCKED_NUMBERS: [&str; 3] = ["110", "118", "119"];
 
@@ -42,6 +43,42 @@ fn is_blocked_number(number: &str) -> bool {
     BLOCKED_NUMBERS.contains(&number)
 }
 
+fn keyring_entry(service: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(service, KEYRING_ACCOUNT).map_err(backend_error)
+}
+
+fn delete_credential_if_present(entry: &keyring::Entry) -> Result<(), String> {
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(backend_error(error)),
+    }
+}
+
+fn delete_legacy_credential() -> Result<(), String> {
+    delete_credential_if_present(&keyring_entry(LEGACY_KEYRING_SERVICE)?)
+}
+
+fn load_or_migrate_password(credential: &keyring::Entry) -> Result<String, String> {
+    match credential.get_password() {
+        Ok(password) => {
+            delete_legacy_credential()?;
+            Ok(password)
+        }
+        Err(keyring::Error::NoEntry) => {
+            let legacy = keyring_entry(LEGACY_KEYRING_SERVICE)?;
+            let password = match legacy.get_password() {
+                Ok(password) => password,
+                Err(keyring::Error::NoEntry) => return Err("パスワードを入力してください".into()),
+                Err(error) => return Err(backend_error(error)),
+            };
+            credential.set_password(&password).map_err(backend_error)?;
+            delete_credential_if_present(&legacy)?;
+            Ok(password)
+        }
+        Err(error) => Err(backend_error(error)),
+    }
+}
+
 #[tauri::command]
 fn get_phone_state(controller: State<'_, Controller>) -> Result<PhoneSnapshot, String> {
     let engine = controller.engine.lock().map_err(backend_error)?;
@@ -53,14 +90,11 @@ fn start_waiting(
     request: StartRequest,
     controller: State<'_, Controller>,
 ) -> Result<PhoneSnapshot, String> {
-    let credential =
-        keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).map_err(backend_error)?;
+    let credential = keyring_entry(KEYRING_SERVICE)?;
     let supplied_password = request.password.filter(|password| !password.is_empty());
     let password = match supplied_password.as_ref() {
         Some(password) => password.clone(),
-        None => credential
-            .get_password()
-            .map_err(|_| "パスワードを入力してください".to_owned())?,
+        None => load_or_migrate_password(&credential)?,
     };
     let config = AccountConfig {
         server: request.server,
@@ -74,6 +108,7 @@ fn start_waiting(
     config.validate().map_err(backend_error)?;
     if let Some(password) = supplied_password {
         credential.set_password(&password).map_err(backend_error)?;
+        delete_legacy_credential()?;
     }
     let mut engine = controller.engine.lock().map_err(backend_error)?;
     engine.start(&config).map_err(backend_error)?;
@@ -133,10 +168,8 @@ fn set_muted(muted: bool, controller: State<'_, Controller>) -> Result<PhoneSnap
 
 #[tauri::command]
 fn reset_credentials() -> Result<(), String> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
-        .map_err(backend_error)?
-        .delete_credential()
-        .map_err(backend_error)
+    delete_credential_if_present(&keyring_entry(KEYRING_SERVICE)?)?;
+    delete_legacy_credential()
 }
 
 fn show_main_window(app: &AppHandle) {

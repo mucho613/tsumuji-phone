@@ -1,12 +1,12 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-const ADAPTER_SOURCE: &str = "../../native/pjsip-adapter/hikari_phone_pjsip.c";
+const ADAPTER_SOURCE: &str = "../../native/pjsip-adapter/tsumuji_phone_pjsip.c";
 const ADAPTER_INCLUDE: &str = "../../native/pjsip-adapter";
 
 fn main() {
     println!("cargo:rerun-if-changed={ADAPTER_SOURCE}");
-    println!("cargo:rerun-if-changed=../../native/pjsip-adapter/hikari_phone_pjsip.h");
+    println!("cargo:rerun-if-changed=../../native/pjsip-adapter/tsumuji_phone_pjsip.h");
     println!("cargo:rerun-if-env-changed=PJPROJECT_ROOT");
 
     if env::var_os("CARGO_FEATURE_NATIVE_PJSIP").is_none() {
@@ -43,7 +43,7 @@ fn build_unix() {
     for (name, value) in &library.defines {
         build.define(name, value.as_deref());
     }
-    build.compile("hikari_phone_pjsip");
+    build.compile("tsumuji_phone_pjsip");
 }
 
 fn build_windows() {
@@ -83,7 +83,7 @@ fn build_windows() {
         .define("WIN64", "1")
         .define("PJ_WIN64", "1")
         .define("PJ_M_X86_64", "1")
-        .compile("hikari_phone_pjsip");
+        .compile("tsumuji_phone_pjsip");
 
     println!("cargo:rustc-link-search=native={}", library_dir.display());
     println!("cargo:rustc-link-lib=static={library_name}");

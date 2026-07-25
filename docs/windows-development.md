@@ -61,7 +61,7 @@ PJSIP 2.17 の `Release|x64` 集約静的ライブラリを MSBuild で作成し
 ```powershell
 .\scripts\build-pjsip-windows.ps1
 cargo check -p telephony-pjsip --features native-pjsip
-cargo run -p hikari-phone-cli --features native-pjsip -- backend
+cargo run -p tsumuji-phone-cli --features native-pjsip -- backend
 ```
 
 デスクトップアプリを起動します。

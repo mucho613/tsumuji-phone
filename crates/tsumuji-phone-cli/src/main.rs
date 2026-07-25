@@ -7,14 +7,16 @@ use telephony_core::{
 use telephony_pjsip::PjsipEngine;
 
 #[cfg(target_os = "windows")]
-const KEYRING_SERVICE: &str = "app.hikari-phone.local";
+const KEYRING_SERVICE: &str = "app.tsumuji-phone.local";
+#[cfg(target_os = "windows")]
+const LEGACY_KEYRING_SERVICE: &str = "app.hikari-phone.local";
 #[cfg(target_os = "windows")]
 const KEYRING_ACCOUNT: &str = "sip-account";
 #[cfg(target_os = "windows")]
 const BLOCKED_NUMBERS: [&str; 3] = ["110", "118", "119"];
 
 #[derive(Debug, Parser)]
-#[command(name = "hikari-phone-cli", about = "Hikari Phone diagnostic utility")]
+#[command(name = "tsumuji-phone-cli", about = "Tsumuji Phone diagnostic utility")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -91,6 +93,34 @@ fn parse_destination(value: &str) -> Result<String, String> {
 }
 
 #[cfg(target_os = "windows")]
+fn delete_credential_if_present(entry: &keyring::Entry) -> keyring::Result<()> {
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn load_or_migrate_password() -> keyring::Result<String> {
+    let credential = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)?;
+    match credential.get_password() {
+        Ok(password) => {
+            let legacy = keyring::Entry::new(LEGACY_KEYRING_SERVICE, KEYRING_ACCOUNT)?;
+            delete_credential_if_present(&legacy)?;
+            Ok(password)
+        }
+        Err(keyring::Error::NoEntry) => {
+            let legacy = keyring::Entry::new(LEGACY_KEYRING_SERVICE, KEYRING_ACCOUNT)?;
+            let password = legacy.get_password()?;
+            credential.set_password(&password)?;
+            delete_credential_if_present(&legacy)?;
+            Ok(password)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn run_call_test(
     server: String,
     local_address: String,
@@ -98,7 +128,7 @@ fn run_call_test(
     destination: &str,
     seconds: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let password = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)?.get_password()?;
+    let password = load_or_migrate_password()?;
     let config = AccountConfig {
         server,
         local_address,

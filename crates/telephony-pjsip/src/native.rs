@@ -6,12 +6,12 @@ use telephony_core::{
 };
 
 #[repr(C)]
-struct HpEngine {
+struct TpEngine {
     _private: [u8; 0],
 }
 
 #[repr(C)]
-struct HpConfig {
+struct TpConfig {
     server: *const c_char,
     local_address: *const c_char,
     user_id: *const c_char,
@@ -22,30 +22,30 @@ struct HpConfig {
 }
 
 #[repr(C)]
-struct HpEvent {
+struct TpEvent {
     kind: c_int,
     call_id: i32,
     peer: *const c_char,
     message: *const c_char,
 }
 
-type HpEventCallback = unsafe extern "C" fn(*mut c_void, *const HpEvent);
+type TpEventCallback = unsafe extern "C" fn(*mut c_void, *const TpEvent);
 
 unsafe extern "C" {
-    fn hp_engine_start(
-        config: *const HpConfig,
-        callback: HpEventCallback,
+    fn tp_engine_start(
+        config: *const TpConfig,
+        callback: TpEventCallback,
         user_data: *mut c_void,
-        out_engine: *mut *mut HpEngine,
+        out_engine: *mut *mut TpEngine,
     ) -> c_int;
-    fn hp_engine_stop(engine: *mut HpEngine) -> c_int;
-    fn hp_engine_dial(engine: *mut HpEngine, number: *const c_char) -> c_int;
-    fn hp_engine_answer(engine: *mut HpEngine) -> c_int;
-    fn hp_engine_reject(engine: *mut HpEngine) -> c_int;
-    fn hp_engine_hang_up(engine: *mut HpEngine) -> c_int;
-    fn hp_engine_send_dtmf(engine: *mut HpEngine, digit: c_char) -> c_int;
-    fn hp_engine_set_muted(engine: *mut HpEngine, muted: c_int) -> c_int;
-    fn hp_last_error(engine: *const HpEngine) -> *const c_char;
+    fn tp_engine_stop(engine: *mut TpEngine) -> c_int;
+    fn tp_engine_dial(engine: *mut TpEngine, number: *const c_char) -> c_int;
+    fn tp_engine_answer(engine: *mut TpEngine) -> c_int;
+    fn tp_engine_reject(engine: *mut TpEngine) -> c_int;
+    fn tp_engine_hang_up(engine: *mut TpEngine) -> c_int;
+    fn tp_engine_send_dtmf(engine: *mut TpEngine, digit: c_char) -> c_int;
+    fn tp_engine_set_muted(engine: *mut TpEngine, muted: c_int) -> c_int;
+    fn tp_last_error(engine: *const TpEngine) -> *const c_char;
 }
 
 #[derive(Debug, Default)]
@@ -55,7 +55,7 @@ struct CallbackState {
 
 #[derive(Debug)]
 pub struct NativeEngine {
-    handle: Option<NonNull<HpEngine>>,
+    handle: Option<NonNull<TpEngine>>,
     callback_state: Box<CallbackState>,
 }
 
@@ -83,7 +83,7 @@ impl NativeEngine {
         let local_address = to_c_string(&config.local_address)?;
         let user_id = to_c_string(&config.user_id)?;
         let password = to_c_string(&config.password)?;
-        let native_config = HpConfig {
+        let native_config = TpConfig {
             server: server.as_ptr(),
             local_address: local_address.as_ptr(),
             user_id: user_id.as_ptr(),
@@ -98,7 +98,7 @@ impl NativeEngine {
             .cast::<c_void>();
         // The adapter copies all config strings before this call returns.
         let status = unsafe {
-            hp_engine_start(
+            tp_engine_start(
                 &raw const native_config,
                 on_event,
                 user_data,
@@ -118,7 +118,7 @@ impl NativeEngine {
         let Some(handle) = self.handle.take() else {
             return Ok(());
         };
-        let status = unsafe { hp_engine_stop(handle.as_ptr()) };
+        let status = unsafe { tp_engine_stop(handle.as_ptr()) };
         status_result(status, handle.as_ptr())
     }
 
@@ -133,30 +133,30 @@ impl NativeEngine {
             ));
         }
         let number = to_c_string(number)?;
-        self.call(|handle| unsafe { hp_engine_dial(handle, number.as_ptr()) })
+        self.call(|handle| unsafe { tp_engine_dial(handle, number.as_ptr()) })
     }
 
     pub fn answer(&mut self) -> Result<(), EngineError> {
-        self.call(|handle| unsafe { hp_engine_answer(handle) })
+        self.call(|handle| unsafe { tp_engine_answer(handle) })
     }
 
     pub fn reject(&mut self) -> Result<(), EngineError> {
-        self.call(|handle| unsafe { hp_engine_reject(handle) })
+        self.call(|handle| unsafe { tp_engine_reject(handle) })
     }
 
     pub fn hang_up(&mut self) -> Result<(), EngineError> {
-        self.call(|handle| unsafe { hp_engine_hang_up(handle) })
+        self.call(|handle| unsafe { tp_engine_hang_up(handle) })
     }
 
     pub fn send_dtmf(&mut self, digit: char) -> Result<(), EngineError> {
         if !matches!(digit, '0'..='9' | '*' | '#') {
             return Err(EngineError::InvalidConfig("invalid DTMF digit".into()));
         }
-        self.call(|handle| unsafe { hp_engine_send_dtmf(handle, digit as c_char) })
+        self.call(|handle| unsafe { tp_engine_send_dtmf(handle, digit as c_char) })
     }
 
     pub fn set_muted(&mut self, muted: bool) -> Result<(), EngineError> {
-        let result = self.call(|handle| unsafe { hp_engine_set_muted(handle, c_int::from(muted)) });
+        let result = self.call(|handle| unsafe { tp_engine_set_muted(handle, c_int::from(muted)) });
         if result.is_ok() {
             self.apply(EngineEvent::Muted(muted));
         }
@@ -172,7 +172,7 @@ impl NativeEngine {
             .snapshot()
     }
 
-    fn call(&mut self, operation: impl FnOnce(*mut HpEngine) -> c_int) -> Result<(), EngineError> {
+    fn call(&mut self, operation: impl FnOnce(*mut TpEngine) -> c_int) -> Result<(), EngineError> {
         let handle = self
             .handle
             .ok_or_else(|| EngineError::InvalidState("PJSIP engine is not running".into()))?;
@@ -197,7 +197,7 @@ impl Drop for NativeEngine {
     }
 }
 
-unsafe extern "C" fn on_event(user_data: *mut c_void, event: *const HpEvent) {
+unsafe extern "C" fn on_event(user_data: *mut c_void, event: *const TpEvent) {
     if user_data.is_null() || event.is_null() {
         return;
     }
@@ -243,11 +243,11 @@ fn c_string_lossy(value: *const c_char) -> String {
         .into_owned()
 }
 
-fn status_result(status: c_int, handle: *mut HpEngine) -> Result<(), EngineError> {
+fn status_result(status: c_int, handle: *mut TpEngine) -> Result<(), EngineError> {
     if status == 0 {
         return Ok(());
     }
-    let detail = c_string_lossy(unsafe { hp_last_error(handle) });
+    let detail = c_string_lossy(unsafe { tp_last_error(handle) });
     Err(EngineError::Backend(if detail.is_empty() {
         format!("PJSIP operation failed with status {status}")
     } else {

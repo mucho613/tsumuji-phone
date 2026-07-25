@@ -10,5 +10,5 @@
 - React: MIT
 - Lucide: ISC
 
-Hikari Phone 本体は GPL-3.0-or-later です。PJSIP の固定ソースは
+Tsumuji Phone 本体は GPL-3.0-or-later です。PJSIP の固定ソースは
 `vendor/pjproject` Git サブモジュールとして管理します。

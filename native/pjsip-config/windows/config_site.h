@@ -1,5 +1,5 @@
-#ifndef HIKARI_PHONE_PJ_CONFIG_SITE_H
-#define HIKARI_PHONE_PJ_CONFIG_SITE_H
+#ifndef TSUMUJI_PHONE_PJ_CONFIG_SITE_H
+#define TSUMUJI_PHONE_PJ_CONFIG_SITE_H
 
 /* The client is audio-only and negotiates PCMU at runtime. */
 #define PJMEDIA_HAS_VIDEO 0

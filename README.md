@@ -1,4 +1,4 @@
-# Hikari Phone
+# Tsumuji Phone
 
 Tailscale 上の Asterisk に接続する、個人向けのデスクトップ／Android SIP
 クライアントです。内線通話は Asterisk 内で完結し、外線通話は Asterisk が
@@ -12,7 +12,7 @@ Tailscale 上の Asterisk に接続する、個人向けのデスクトップ／
 
 - `crates/telephony-core`: PJSIP に依存しない状態機械とエンジン契約
 - `crates/telephony-pjsip`: 薄い C ABI と Rust FFI
-- `crates/hikari-phone-cli`: バックエンド診断 CLI
+- `crates/tsumuji-phone-cli`: バックエンド診断 CLI
 - `native/pjsip-adapter`: PJSUA-LIB を扱う C アダプター
 - `src-tauri`: デスクトップアプリの Rust バックエンド
 - `src`: React UI
@@ -40,7 +40,7 @@ PJSIP を静的ビルドしてネイティブアダプターを検査:
 ./scripts/build-pjsip-linux.sh
 source target/pjproject-env.sh
 cargo check -p telephony-pjsip --features native-pjsip
-cargo run -p hikari-phone-cli -- backend
+cargo run -p tsumuji-phone-cli -- backend
 ```
 
 アプリを PJSIP 付きで起動:
