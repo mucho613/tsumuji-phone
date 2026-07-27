@@ -29,17 +29,12 @@ PJSUA-LIB のコールバックは C アダプターから Rust FFI の同期済
 
 ## SIP 経路
 
-デスクトップと Android は、どちらも tailnet 内の OpenSIPS UDP 5060 を SIP の
-入口とします。OpenSIPS は同じ Ubuntu サーバーの Asterisk localhost UDP 5061
-へ SIP を中継します。RTP は OpenSIPS や push gateway を経由せず、クライアントと
-Asterisk の間で直接送受信します。
+デスクトップと Android は、どちらも tailnet 内の Asterisk UDP 5060 へ直接
+接続します。RTP もクライアントと Asterisk の間で直接送受信します。
 
 ```text
 Desktop / Android
     | SIP: Tailscale UDP 5060
-    v
-OpenSIPS
-    | SIP: localhost UDP 5061
     v
 Asterisk -------- Home gateway / external line
     ^
@@ -58,10 +53,11 @@ Asterisk -------- Home gateway / external line
 
 ## Android の待受
 
-現段階では、Android Service が存続している間は SIP 登録を維持します。「待受を開始」
-した意図、SIP サーバー、ユーザ ID を端末内へ保存し、明示的に「待受を停止」するまで
-維持します。プロセスの次回起動時は保存済みパスワードを Android Keystore から読み、
-一度だけ自動登録を開始します。
+画面を開いている間は、Android Service が SIP 登録を維持します。「待受を開始」した
+意図、SIP サーバー、ユーザ ID を端末内へ保存し、明示的に「待受を停止」するまで
+維持します。プロセスの次回通常起動時は保存済みパスワードを Android Keystore
+から読み、一度だけ自動登録を開始します。画面を閉じて Service が終了した後は
+SIP登録を常駐させません。
 
 初回登録は最大 10 秒待ちます。成功または明示的な失敗は直ちに確定し、失敗後は
 自動再試行せず「再接続」を待ちます。登録後に接続を失った場合だけ 5 秒間隔、
@@ -72,38 +68,43 @@ Asterisk -------- Home gateway / external line
 通話中は変更適用、待受停止、再接続を禁止します。登録中は番号入力を許可しますが、
 発信を予約せず、登録完了まで発信操作を無効にします。
 
-### Push 対応後
+### FCM 起動試験
 
-バッテリー消費を抑えるため、アプリを閉じている間は SIP 登録や foreground service
-を常駐させません。OpenSIPS の RFC 8599 push 対応 contact と FCM を使い、着信時
-だけアプリを起動します。この段階で、現在のプロセス存続中の登録維持方針を見直します。
+現フェーズは実着信を扱わず、アプリ終了中に FCM がプロセスを起動し、画面を開かず
+PJSIP 登録を完了できるかを縦切りで検証します。
 
-1. 「待受を開始」で Android は push token と一時的な SIP 登録を OpenSIPS へ通知し、
-   push gateway 上の端末を有効化する
-2. 着信時、OpenSIPS は Android の再登録を最大 30 秒待ちながら loopback API で
-   push gateway へ wake を要求する
-3. push gateway は FCM へ wake と推測困難な一時 call token だけを送る
-4. Android Service が起動し、Tailscale IPv4 を取得して OpenSIPS へ SIP 登録する
-5. OpenSIPS は保留していた INVITE を新しい contact へ配送する
-6. 呼が先に終了した場合、gateway は cancel push を送り、Android は着信表示と
-   一時登録を終了する
+```text
+Windows test sender
+    | HTTPS: FCM HTTP v1 (FID, high priority, TTL 30 s)
+    v
+Firebase Cloud Messaging
+    | data-only: type=wake, callToken
+    v
+FirebaseMessagingService
+    | startForegroundService
+    v
+TelephonyService -- Tailscale/SIP --> Asterisk
+    |
+    +-- success or failure, then unconditional stop by 30 s
+```
 
-FCM は SIP の signaling 経路ではなく、起動信号の配送だけに使用します。発信者番号、
-SIP ユーザ ID、SIP 資格情報は payload に含めません。Android が INVITE を受信した
-後に、SIP signaling から着信情報を表示します。OpenSIPS、Asterisk、push gateway
-および Android API は Tailscale からだけ到達可能とします。
+FCM SDK は registration token ではなく FID の直接送信 API を使用します。
+`onRegistered(installationId)` で受け取った FID は専用の Android Keystore 鍵で
+暗号化し、Android native 内だけで扱います。ローカル送信時も FID はコマンドライン
+引数にせず、実行後の入力欄へ貼り付けます。
 
-## Push gateway
+FCM callback は高優先度、data key の完全一致、通知権限、待受意図、call token の
+形式と重複を検証します。call token の生値は Service へ渡さず、SHA-256 hash だけを
+2分保持します。登録済み／登録中なら foreground service を開始しません。
 
-push gateway はこのリポジトリ内の Rust workspace member として実装し、Ubuntu の
-systemd service として OpenSIPS と同じサーバーで常時稼働させます。
+有効な wake は `shortService` 型 foreground service を起動し、即時に
+「着信接続中」を表示します。Tauri Activity を作らないプロセス起動にも対応するため、
+Android Service と Tauri UI は遅延初期化した同じ Rust/PJSIP engine を共有します。
+登録応答は10秒待ち、起動信号の受信から30秒で成功・失敗・通話状態にかかわらず
+PJSIP と foreground service を停止します。
 
-- OpenSIPS からの wake/cancel API は loopback のみに bind
-- Android の pairing/device API は Tailscale Serve の HTTPS 経由で公開
-- device、FCM token、push 有効状態、一時 call token を SQLite に保存
-- 初回登録は短時間だけ有効な一度限りの pairing code と端末鍵で認証
-- 一つの SIP ユーザ ID に対して有効な Android device は一台
-- ログへ SIP パスワード、端末秘密鍵、完全な電話番号を出力しない
+Push gateway、pairing、OpenSIPS、INVITE 保留、cancel、実着信は後続設計まで
+実装しません。
 
 ## Android プラットフォーム層
 
@@ -112,17 +113,15 @@ service の状態を監視します。ユーザー向けの待受状態は「待
 「待受中」「接続失敗」の四つに統一します。通話の有無と段階は待受状態とは別に
 `PhoneSnapshot` で表します。
 
-SIP パスワードは Android Keystore で保護し、保存先は一件だけとします。Push 対応後
-に追加する device credential も同様に保護します。ローカル SIP アドレスは
+SIP パスワードは Android Keystore で保護し、保存先は一件だけとします。FID は
+別の Android Keystore 鍵で保護します。ローカル SIP アドレスは
 Tailscale IPv4 から自動決定し、設定画面へ入力欄を出しません。明示的な待受停止では
 自動開始の意図を解除しますが、保存済み SIP サーバー、ユーザ ID、パスワードは維持
-します。Push 対応後は端末再起動後の最初のロック解除を経て push 待受を復元し、
-待受停止を gateway にも反映します。
+します。FID は待受停止時も維持します。
 
-着信と通話操作は Core-Telecom と CallStyle 通知へ統合します。音声 focus、
-Bluetooth、スピーカー、受話口、ミュートを Android の動的 routing に従って扱い、
-デスクトップの音声 device ID は共有しません。PJSIP は Oboe を使用し、端末音声
-48 kHz と PCMU/RTP 8 kHz の変換を担当します。バッテリー最適化の除外は要求しません。
+PJSIP は Oboe を使用し、端末音声48 kHz と PCMU/RTP 8 kHz の変換を担当します。
+バッテリー最適化の除外は要求しません。Core-Telecom と CallStyle 通知は実着信
+フェーズまで延期します。
 
 ## 配布対象
 

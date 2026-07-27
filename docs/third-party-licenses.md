@@ -9,6 +9,8 @@
 - Tauri 2: Apache-2.0 / MIT
 - React: MIT
 - Lucide: ISC
+- Firebase Android SDK / Firebase Cloud Messaging: Apache-2.0
+- Google Services Gradle Plugin: Apache-2.0
 
 Tsumuji Phone 本体は GPL-3.0-or-later です。PJSIP の固定ソースは
 `vendor/pjproject` Git サブモジュールとして管理します。

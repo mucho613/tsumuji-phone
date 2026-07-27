@@ -28,6 +28,14 @@ pub struct AndroidStatus {
     pub credential_stored: bool,
     pub saved_server: Option<String>,
     pub saved_user_id: Option<String>,
+    pub notification_permission: String,
+    pub push_fid_ready: bool,
+    pub push_setup_error: Option<String>,
+    pub last_push_result: Option<String>,
+    pub last_push_received_at: Option<i64>,
+    pub last_push_registered_at: Option<i64>,
+    pub last_push_duration_millis: Option<i64>,
+    pub last_push_error: Option<String>,
     last_error: Option<String>,
 }
 
@@ -108,21 +116,37 @@ impl AndroidPlatform {
             .run_mobile_plugin::<()>("resetCredentials", ())
             .map_err(|error| error.to_string())
     }
+
+    pub fn request_push_permission(&self) -> Result<(), String> {
+        self.0
+            .run_mobile_plugin::<()>("requestPushPermission", ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn open_push_notification_settings(&self) -> Result<(), String> {
+        self.0
+            .run_mobile_plugin::<()>("openPushNotificationSettings", ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn copy_push_fid(&self) -> Result<(), String> {
+        self.0
+            .run_mobile_plugin::<()>("copyPushFid", ())
+            .map_err(|error| error.to_string())
+    }
 }
 
-pub fn install_engine(engine: Arc<Mutex<PjsipEngine>>) {
-    assert!(
-        ANDROID_ENGINE.set(engine).is_ok(),
-        "Android PJSIP engine was initialized more than once"
-    );
+pub fn shared_engine() -> Arc<Mutex<PjsipEngine>> {
+    Arc::clone(
+        ANDROID_ENGINE.get_or_init(|| Arc::new(Mutex::new(PjsipEngine::default()))),
+    )
 }
 
 fn with_engine<T>(
     operation: impl FnOnce(&mut PjsipEngine) -> Result<T, String>,
 ) -> Result<T, String> {
     let engine = ANDROID_ENGINE
-        .get()
-        .ok_or_else(|| "Android PJSIPエンジンが初期化されていません".to_string())?;
+        .get_or_init(|| Arc::new(Mutex::new(PjsipEngine::default())));
     let mut engine = engine.lock().map_err(|error| error.to_string())?;
     operation(&mut engine)
 }

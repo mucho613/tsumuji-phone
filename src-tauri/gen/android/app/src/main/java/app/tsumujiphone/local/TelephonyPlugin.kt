@@ -3,6 +3,9 @@ package app.tsumujiphone.local
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.os.PersistableBundle
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
@@ -118,6 +121,45 @@ class TelephonyPlugin(private val activity: Activity) : Plugin(activity) {
     }
   }
 
+  @Command
+  fun requestPushPermission(invoke: Invoke) {
+    val mainActivity = activity as? MainActivity
+    if (mainActivity == null) {
+      invoke.reject("通知権限を確認できませんでした")
+      return
+    }
+    mainActivity.requestNotificationPermission {
+      invoke.resolve()
+    }
+  }
+
+  @Command
+  fun openPushNotificationSettings(invoke: Invoke) {
+    val mainActivity = activity as? MainActivity
+    if (mainActivity == null) {
+      invoke.reject("Androidの通知設定を開けませんでした")
+      return
+    }
+    mainActivity.openNotificationSettings()
+    invoke.resolve()
+  }
+
+  @Command
+  fun copyPushFid(invoke: Invoke) {
+    val fid = PushStateStore(activity.applicationContext).loadFid()
+    if (fid == null) {
+      invoke.reject("FCMの準備がまだ完了していません")
+      return
+    }
+    val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val clip = ClipData.newPlainText("Tsumuji Phone FCM FID", fid)
+    clip.description.extras = PersistableBundle().apply {
+      putBoolean("android.content.extra.IS_SENSITIVE", true)
+    }
+    clipboard.setPrimaryClip(clip)
+    invoke.resolve()
+  }
+
   private fun withService(invoke: Invoke, operation: (TelephonyService) -> Unit) {
     val connectedService = service
     if (connectedService != null) {
@@ -142,5 +184,14 @@ class TelephonyPlugin(private val activity: Activity) : Plugin(activity) {
     put("savedServer", savedServer)
     put("savedUserId", savedUserId)
     put("lastError", lastError)
+    val push = PushStateStore(activity.applicationContext).status()
+    put("notificationPermission", push.notificationPermission)
+    put("pushFidReady", push.fidReady)
+    put("pushSetupError", push.setupError)
+    put("lastPushResult", push.lastResult)
+    put("lastPushReceivedAt", push.lastReceivedAt)
+    put("lastPushRegisteredAt", push.lastRegisteredAt)
+    put("lastPushDurationMillis", push.lastDurationMillis)
+    put("lastPushError", push.lastError)
   }
 }

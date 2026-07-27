@@ -33,10 +33,20 @@ struct Controller {
     engine: Arc<Mutex<PjsipEngine>>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 impl Default for Controller {
     fn default() -> Self {
         Self {
             engine: Arc::new(Mutex::new(PjsipEngine::default())),
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+impl Default for Controller {
+    fn default() -> Self {
+        Self {
+            engine: android_platform::shared_engine(),
         }
     }
 }
@@ -57,6 +67,14 @@ struct PlatformInfo {
     credential_stored: bool,
     saved_server: Option<String>,
     saved_user_id: Option<String>,
+    notification_permission: String,
+    push_fid_ready: bool,
+    push_setup_error: Option<String>,
+    last_push_result: Option<String>,
+    last_push_received_at: Option<i64>,
+    last_push_registered_at: Option<i64>,
+    last_push_duration_millis: Option<i64>,
+    last_push_error: Option<String>,
 }
 
 fn backend_error(error: impl std::fmt::Display) -> String {
@@ -188,6 +206,14 @@ fn get_platform_info() -> PlatformInfo {
         credential_stored: false,
         saved_server: None,
         saved_user_id: None,
+        notification_permission: "unavailable".into(),
+        push_fid_ready: false,
+        push_setup_error: None,
+        last_push_result: None,
+        last_push_received_at: None,
+        last_push_registered_at: None,
+        last_push_duration_millis: None,
+        last_push_error: None,
     }
 }
 
@@ -203,7 +229,57 @@ async fn get_platform_info(
         credential_stored: status.credential_stored,
         saved_server: status.saved_server,
         saved_user_id: status.saved_user_id,
+        notification_permission: status.notification_permission,
+        push_fid_ready: status.push_fid_ready,
+        push_setup_error: status.push_setup_error,
+        last_push_result: status.last_push_result,
+        last_push_received_at: status.last_push_received_at,
+        last_push_registered_at: status.last_push_registered_at,
+        last_push_duration_millis: status.last_push_duration_millis,
+        last_push_error: status.last_push_error,
     })
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn request_push_permission() -> Result<(), String> {
+    Err("Push通知はAndroid版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn request_push_permission(
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<(), String> {
+    platform.request_push_permission()
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn open_push_notification_settings() -> Result<(), String> {
+    Err("Push通知はAndroid版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn open_push_notification_settings(
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<(), String> {
+    platform.open_push_notification_settings()
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn copy_push_fid() -> Result<(), String> {
+    Err("FCMはAndroid版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn copy_push_fid(
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<(), String> {
+    platform.copy_push_fid()
 }
 
 #[tauri::command]
@@ -362,8 +438,6 @@ fn show_main_window(app: &AppHandle) {
 /// Panics if Tauri cannot create the application runtime or system tray.
 pub fn run() {
     let controller = Controller::default();
-    #[cfg(target_os = "android")]
-    android_platform::install_engine(Arc::clone(&controller.engine));
     let builder = tauri::Builder::default().manage(controller);
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_platform::init());
@@ -421,7 +495,10 @@ pub fn run() {
             hang_up,
             send_dtmf,
             set_muted,
-            reset_credentials
+            reset_credentials,
+            request_push_permission,
+            open_push_notification_settings,
+            copy_push_fid
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,7 +1,10 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  Bell,
+  Clipboard,
   Delete,
+  ExternalLink,
   Headphones,
   Mic,
   MicOff,
@@ -52,6 +55,20 @@ type PlatformInfo = {
   credentialStored: boolean;
   savedServer: string | null;
   savedUserId: string | null;
+  notificationPermission: "granted" | "notRequested" | "denied" | "unavailable";
+  pushFidReady: boolean;
+  pushSetupError: string | null;
+  lastPushResult:
+    | "registering"
+    | "registered"
+    | "completed"
+    | "failed"
+    | "ignored"
+    | null;
+  lastPushReceivedAt: number | null;
+  lastPushRegisteredAt: number | null;
+  lastPushDurationMillis: number | null;
+  lastPushError: string | null;
 };
 
 type AppliedConnection = {
@@ -65,6 +82,14 @@ const initialPlatformInfo: PlatformInfo = {
   credentialStored: false,
   savedServer: null,
   savedUserId: null,
+  notificationPermission: "unavailable",
+  pushFidReady: false,
+  pushSetupError: null,
+  lastPushResult: null,
+  lastPushReceivedAt: null,
+  lastPushRegisteredAt: null,
+  lastPushDurationMillis: null,
+  lastPushError: null,
 };
 
 const keys = [
@@ -92,6 +117,28 @@ const registrationLabels: Record<RegistrationState, string> = {
   failed: "接続失敗",
 };
 
+const pushResultLabels: Record<
+  NonNullable<PlatformInfo["lastPushResult"]>,
+  string
+> = {
+  registering: "SIP接続中",
+  registered: "SIP登録成功",
+  completed: "SIP登録成功（30秒で終了）",
+  failed: "SIP接続失敗",
+  ignored: "起動信号を無視",
+};
+
+function formatPushTime(timestamp: number | null) {
+  if (timestamp === null) return "未実行";
+  return new Intl.DateTimeFormat("ja-JP", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(timestamp));
+}
+
 function App() {
   const [tab, setTab] = useState<"phone" | "settings">("phone");
   const [phoneState, setPhoneState] = useState(initialPhoneState);
@@ -103,6 +150,7 @@ function App() {
   const [appliedConnection, setAppliedConnection] =
     useState<AppliedConnection | null>(null);
   const [error, setError] = useState("");
+  const [pushMessage, setPushMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const restoredAndroidSettings = useRef(false);
 
@@ -202,6 +250,24 @@ function App() {
 
   async function reconnect() {
     await perform(() => invoke("reconnect"));
+  }
+
+  async function runPushAction(
+    action: () => Promise<void>,
+    successMessage = "",
+  ) {
+    setBusy(true);
+    setError("");
+    setPushMessage("");
+    try {
+      await action();
+      setPushMessage(successMessage);
+      setPlatformInfo(await invoke<PlatformInfo>("get_platform_info"));
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -452,6 +518,103 @@ function App() {
                 </div>
               )}
             </section>
+
+            {platformInfo.isAndroid && (
+              <section>
+                <h2>Push待受</h2>
+                <div className="push-summary">
+                  <div>
+                    <span>通知権限</span>
+                    <strong>
+                      {platformInfo.notificationPermission === "granted"
+                        ? "許可済み"
+                        : platformInfo.notificationPermission === "denied"
+                          ? "未許可"
+                          : "未設定"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>FCM</span>
+                    <strong>
+                      {platformInfo.pushFidReady ? "準備完了" : "準備中"}
+                    </strong>
+                    {platformInfo.pushSetupError && (
+                      <small className="push-error">
+                        {platformInfo.pushSetupError}
+                      </small>
+                    )}
+                  </div>
+                  <div>
+                    <span>直近の起動信号</span>
+                    <strong>
+                      {platformInfo.lastPushResult
+                        ? pushResultLabels[platformInfo.lastPushResult]
+                        : "未実行"}
+                    </strong>
+                    {platformInfo.lastPushReceivedAt !== null && (
+                      <small>
+                        受信 {formatPushTime(platformInfo.lastPushReceivedAt)}
+                        {platformInfo.lastPushDurationMillis !== null &&
+                          `／SIP結果 ${(platformInfo.lastPushDurationMillis / 1000).toFixed(1)}秒`}
+                      </small>
+                    )}
+                    {platformInfo.lastPushError && (
+                      <small className="push-error">
+                        {platformInfo.lastPushError}
+                      </small>
+                    )}
+                  </div>
+                </div>
+                {platformInfo.notificationPermission !== "granted" && (
+                  <button
+                    className="secondary-command"
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void runPushAction(() =>
+                        invoke("request_push_permission"),
+                      )
+                    }
+                  >
+                    <Bell size={18} />
+                    通知を許可
+                  </button>
+                )}
+                {platformInfo.notificationPermission === "denied" && (
+                  <button
+                    className="secondary-command"
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void runPushAction(() =>
+                        invoke("open_push_notification_settings"),
+                      )
+                    }
+                  >
+                    <ExternalLink size={18} />
+                    Androidの通知設定を開く
+                  </button>
+                )}
+                <button
+                  className="secondary-command"
+                  type="button"
+                  disabled={busy || !platformInfo.pushFidReady}
+                  onClick={() =>
+                    void runPushAction(
+                      () => invoke("copy_push_fid"),
+                      "FCMテスト用FIDをコピーしました",
+                    )
+                  }
+                >
+                  <Clipboard size={18} />
+                  FCMテスト用FIDをコピー
+                </button>
+                {pushMessage && <p className="push-message">{pushMessage}</p>}
+                <p className="platform-note">
+                  通知を許可した場合のみ、アプリ終了中の起動信号を処理します。
+                </p>
+              </section>
+            )}
 
             <section>
               <h2>音声デバイス</h2>

@@ -17,6 +17,10 @@ target
 vendor/pjproject/build-tsumuji-phone
 target/pjproject-env.sh
 
+# Local Firebase project configuration and credentials
+src-tauri/gen/android/app/google-services.json
+firebase-service-account*.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

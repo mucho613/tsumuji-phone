@@ -1,9 +1,8 @@
-# 初期リリース要件
+# 現行要件
 
 ## 対象
 
 - Ubuntu サーバー上で常時稼働し、Tailscale から到達できる Asterisk
-- Asterisk と同じ Ubuntu サーバー上で OpenSIPS と push gateway を常時稼働
 - 内線通話は Asterisk 内で完結し、外線通話は Asterisk がホームゲートウェイへ中継
 - 最初の端末は Ubuntu 24.04。次に Windows 11 x64、Android 12/API 31+
 - 単一の SIP アカウントを使用し、設定プロファイルの切り替えは行わない
@@ -15,8 +14,7 @@
 - 外線／内線の発信と着信、番号表示、応答、拒否、取消、切断
 - 発信先番号は半角数字 1～32 桁（先頭の 0 を許可）
 - 単一アカウント、単一通話。二つ目の着信には `486 Busy Here`
-- クライアントは OpenSIPS の UDP/IPv4 5060 へ接続し、OpenSIPS は localhost の
-  Asterisk UDP/IPv4 5061 へ中継
+- クライアントは Asterisk の UDP/IPv4 5060 へ直接接続
 - SIP サーバーには IPv4 アドレスまたは DNS/MagicDNS ホスト名を指定
 - デスクトップと Android は `100.64.0.0/10` の Tailscale IPv4 アドレスを自動取得し、
   手入力欄や LAN 接続へのフォールバックを提供しない
@@ -44,8 +42,7 @@
 - Android 12/API 31 以上を対象とし、実機は `arm64-v8a`、エミュレーターは
   `x86_64` のみをビルド
 - 初期配布は署名済み APK の直接配布とし、Google Play での配布は対象外
-- Tailscale は端末側で常時接続し、SIP、pairing、push gateway の通信は tailnet
-  内に限定
+- Tailscale は端末側で常時接続し、SIP 通信は tailnet 内に限定
 - Android Keystore に SIP パスワードを一件だけ保存し、SIP サーバーとユーザ ID
   も端末内へ保存する。UI や IPC へ保存済みパスワードを返さない
 - 「待受を開始」後は明示的に「待受を停止」するまで待受設定を維持し、アプリの
@@ -60,26 +57,34 @@
 - 設定変更がある場合だけ「変更を適用」を表示して SIP 登録を再開始する。通話中は
   変更適用、待受停止、再接続を許可しない
 - Android Service が同一プロセス内の Rust/PJSIP を所有し、UI は状態を監視
-- 通話 UI は Core-Telecom の CallStyle 通知を使用し、応答、拒否、切断、
-  ミュート、音声経路切り替えを提供
 - PJSIP の音声 backend は Oboe とし、端末側は 48 kHz、SIP/RTP は PCMU 8 kHz
-- 現段階ではアプリのプロセスが存続している間だけ SIP 登録と着信待受を維持する
 
-### Android Push 対応
+### Android FCM 起動試験
 
 - Google Play Services と Firebase Cloud Messaging（FCM）を使用し、アプリを
   閉じている間は SIP 登録や foreground service を常駐させない
-- FCM の起動信号を受信したときだけ一時的に OpenSIPS へ登録する
-- FCM payload は wake/cancel の種別と推測困難な一時 call token のみに限定し、
-  発信者番号、SIP ユーザ ID、SIP 資格情報を含めない
-- OpenSIPS は着信時に最大 30 秒間 Android の再登録を待ち、間に合わなければ
-  通常の不応答として終了
-- 呼が取り消された場合は cancel push により着信 UI と登録処理を終了
-- Android Keystore に端末資格情報も一件だけ保存し、初回 pairing は一度限りの
-  pairing code で行う
-- 一つの SIP ユーザ ID に対して有効な Android 端末は一台
-- 端末再起動後は最初のロック解除後から push 待受を再開
+- FCM の高優先度 data-only 起動信号を受信したときだけ、短時間の foreground
+  service から保存済み設定を使って Asterisk へ登録する
+- 起動信号の data は `type=wake` と、暗号学的乱数で生成した 256 bit の
+  Base64URL `callToken` だけとする。TTL は 30 秒、collapse は使用しない
+- SIP 登録は起動信号の受信から最大 30 秒で無条件に停止する。登録応答は 10 秒待ち、
+  失敗時は自動再試行しない
+- 登録中は無音・低優先度の「着信接続中」通知を表示する。成功時は30秒後に通知を
+  消し、失敗時だけ通常優先度の「着信接続に失敗しました」通知を残す
+- 通知権限は設定画面の操作時だけ要求する。権限がない場合は Push を処理せず、
+  通常の SIP 発着信機能は制限しない
+- Firebase Installation ID（FID）は Android Keystore で暗号化して保存し、Rust、
+  Web UI、ログへ値を返さない。設定画面の操作で Android native から直接
+  クリップボードへコピーする
+- 同一 `callToken` はハッシュだけを保存して2分間重複排除し、token をログへ出さない
+- 待受停止中、SIP登録済み、またはSIP登録中の起動信号は既存状態を変えず無視する
+- Windows のローカル送信スクリプトは専用サービスアカウントと実行時入力の FID
+  を使い、HTTP v1 API の `fid` 宛へ送る。FID、call token、payload は表示しない
 - バッテリー最適化の除外を必須としない
+
+実着信、Push gateway、pairing、OpenSIPS の INVITE 保留、cancel、Core-Telecom、
+CallStyle 通知はこの起動試験の対象外とする。Android の強制停止後の Push 受信も
+OS の制約により対象外とする。
 
 ## 初期対象外
 

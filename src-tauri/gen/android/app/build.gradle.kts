@@ -3,7 +3,14 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.google.gms.google-services")
     id("rust")
+}
+
+val googleServicesFile = file("google-services.json")
+check(googleServicesFile.isFile) {
+    "Firebase構成ファイルがありません。Firebase Consoleから取得した google-services.json を " +
+        "${googleServicesFile.absolutePath} に配置してください。手順: docs/firebase-development.md"
 }
 
 val tauriProperties = Properties().apply {
@@ -63,6 +70,9 @@ rust {
 }
 
 dependencies {
+    implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
+    implementation("com.google.firebase:firebase-messaging")
+    implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")
