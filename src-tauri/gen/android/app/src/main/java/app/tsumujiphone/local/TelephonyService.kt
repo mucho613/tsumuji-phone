@@ -9,14 +9,31 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.telecom.DisconnectCause
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
 import androidx.core.app.ServiceCompat
+import androidx.core.telecom.CallAttributesCompat
+import androidx.core.telecom.CallControlResult
+import androidx.core.telecom.CallControlScope
+import androidx.core.telecom.CallsManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 internal enum class AndroidWaitingState(val wireName: String) {
   STOPPED("stopped"),
@@ -43,6 +60,8 @@ class TelephonyService : Service() {
 
   private val binder = LocalBinder()
   private val handler = Handler(Looper.getMainLooper())
+  private val telecomCoroutineScope =
+    CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private val registrationMonitor = object : Runnable {
     override fun run() {
       observeRegistration()
@@ -54,6 +73,7 @@ class TelephonyService : Service() {
   private val pushDeadline = Runnable { finishPushWake() }
   private lateinit var credentialStore: AndroidCredentialStore
   private lateinit var pushStore: PushStateStore
+  private lateinit var callsManager: CallsManager
   private var monitorEnabled = false
   private var normalStartupAttempted = false
   private var hasRegistered = false
@@ -64,6 +84,16 @@ class TelephonyService : Service() {
   private var pushWakeActive = false
   private var pushReceivedAt = 0L
   private var pushRegistrationRecorded = false
+  private var telecomCallJob: Job? = null
+  private var telecomCallControl: CallControlScope? = null
+  private var telecomRegistrationFailed = false
+  private var telecomDisconnectRequested = false
+  private var telecomMarkedActive = false
+  private var callForegroundActive = false
+  private var pendingTelecomDisconnectCause: DisconnectCause? = null
+  private var observedCallDirection = "none"
+  private var observedCallPhase = "none"
+  private var observedCallPeer = ""
   private var status = AndroidPlatformStatus(
     state = AndroidWaitingState.STOPPED,
     tailscaleAddress = null,
@@ -77,6 +107,8 @@ class TelephonyService : Service() {
     super.onCreate()
     credentialStore = AndroidCredentialStore(applicationContext)
     pushStore = PushStateStore(applicationContext)
+    callsManager = CallsManager(applicationContext)
+    callsManager.registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE)
     createNotificationChannels()
     setStopped()
   }
@@ -87,19 +119,29 @@ class TelephonyService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    if (intent?.action != ACTION_PUSH_WAKE) {
-      stopSelf(startId)
-      return START_NOT_STICKY
+    when (intent?.action) {
+      ACTION_PUSH_WAKE -> {
+        promotePushWakeToForeground()
+        startPushWake(intent.getLongExtra(EXTRA_PUSH_RECEIVED_AT, System.currentTimeMillis()))
+      }
+      ACTION_ANSWER_CALL -> answerCallFromNotification()
+      ACTION_REJECT_CALL -> rejectCallFromNotification()
+      ACTION_HANG_UP_CALL -> hangUpCallFromNotification()
+      ACTION_CALL_ACTIVE -> Unit
+      else -> {
+        stopSelf(startId)
+        return START_NOT_STICKY
+      }
     }
-    promotePushWakeToForeground()
-    startPushWake(intent.getLongExtra(EXTRA_PUSH_RECEIVED_AT, System.currentTimeMillis()))
     return START_NOT_STICKY
   }
 
   override fun onDestroy() {
     handler.removeCallbacks(pushDeadline)
     stopMonitor()
-    NativeTelephony.nativeStop()
+    cancelCallNotification()
+    telecomCoroutineScope.cancel()
+    stopNativeForServiceShutdown()
     super.onDestroy()
   }
 
@@ -292,6 +334,7 @@ class TelephonyService : Service() {
   private fun observeRegistration() {
     if (!monitorEnabled) return
 
+    observeNativeCall()
     val now = SystemClock.elapsedRealtime()
     when (NativeTelephony.nativeRegistrationState()) {
       "registered" -> {
@@ -375,11 +418,230 @@ class TelephonyService : Service() {
     }
   }
 
+  private fun observeNativeCall() {
+    val direction = NativeTelephony.nativeCallDirection()
+    val phase = NativeTelephony.nativeCallPhase()
+    val peer = NativeTelephony.nativeCallPeer().orEmpty()
+
+    if (direction != observedCallDirection ||
+      phase != observedCallPhase ||
+      peer != observedCallPeer
+    ) {
+      Log.i(TAG, "Native call changed: direction=$direction phase=$phase")
+    }
+    if (direction != "none") {
+      if (observedCallDirection == "none") {
+        beginTelecomCall(direction, peer)
+      }
+      if (telecomCallControl != null &&
+        (direction != observedCallDirection ||
+        phase != observedCallPhase ||
+        peer != observedCallPeer)
+      ) {
+        showCallNotification(direction, phase, peer)
+      }
+      if (phase == "active" && !telecomMarkedActive) {
+        markTelecomCallActive()
+      }
+    } else if (observedCallDirection != "none") {
+      requestTelecomDisconnect(DisconnectCause(DisconnectCause.REMOTE))
+      cancelCallNotification()
+      if (!pushWakeActive && telecomCallJob == null) {
+        stopSelf()
+      }
+    }
+
+    observedCallDirection = direction
+    observedCallPhase = phase
+    observedCallPeer = peer
+    if (direction == "none") {
+      telecomRegistrationFailed = false
+      telecomMarkedActive = false
+    }
+  }
+
+  private fun beginTelecomCall(direction: String, peer: String) {
+    if (telecomCallJob != null || telecomRegistrationFailed) return
+
+    startService(
+      Intent(this, TelephonyService::class.java).setAction(ACTION_CALL_ACTIVE),
+    )
+    telecomDisconnectRequested = false
+    telecomMarkedActive = false
+    pendingTelecomDisconnectCause = null
+    val displayPeer = displayPeer(peer)
+    val attributes = CallAttributesCompat(
+      displayName = displayPeer,
+      address = Uri.fromParts("sip", displayPeer, null),
+      direction = if (direction == "incoming") {
+        CallAttributesCompat.DIRECTION_INCOMING
+      } else {
+        CallAttributesCompat.DIRECTION_OUTGOING
+      },
+      callType = CallAttributesCompat.CALL_TYPE_AUDIO_CALL,
+      callCapabilities = 0,
+    )
+
+    telecomCallJob = telecomCoroutineScope.launch {
+      try {
+        callsManager.addCall(
+          attributes,
+          onAnswer = {
+            promoteCallToForeground(
+              "incoming",
+              "connecting",
+              NativeTelephony.nativeCallPeer().orEmpty(),
+            )
+            requireNativeCallSuccess(NativeTelephony.nativeAnswer())
+          },
+          onDisconnect = { cause ->
+            disconnectNativeCall(cause)
+          },
+          onSetActive = {
+            if (NativeTelephony.nativeCallPhase() == "ringing") {
+              promoteCallToForeground(
+                "incoming",
+                "connecting",
+                NativeTelephony.nativeCallPeer().orEmpty(),
+              )
+              requireNativeCallSuccess(NativeTelephony.nativeAnswer())
+            }
+          },
+          onSetInactive = {
+            throw UnsupportedOperationException("保留には対応していません")
+          },
+        ) {
+          telecomCallControl = this
+          showCallNotification(
+            NativeTelephony.nativeCallDirection(),
+            NativeTelephony.nativeCallPhase(),
+            NativeTelephony.nativeCallPeer().orEmpty(),
+          )
+          if (direction == "outgoing") {
+            promoteCallToForeground(
+              direction,
+              NativeTelephony.nativeCallPhase(),
+              NativeTelephony.nativeCallPeer().orEmpty(),
+            )
+          }
+          if (pushWakeActive) {
+            removePushForeground()
+          }
+          pendingTelecomDisconnectCause?.let { cause ->
+            launch {
+              disconnect(cause)
+            }
+          }
+        }
+      } catch (error: Exception) {
+        telecomRegistrationFailed = true
+        Log.e(TAG, "Core Telecom rejected the call", error)
+      } finally {
+        telecomCallControl = null
+        telecomCallJob = null
+        telecomDisconnectRequested = false
+        pendingTelecomDisconnectCause = null
+        if (NativeTelephony.nativeCallDirection() == "none") {
+          cancelCallNotification()
+          if (!pushWakeActive) {
+            stopSelf()
+          }
+        }
+      }
+    }
+  }
+
+  private fun answerCallFromNotification() {
+    if (NativeTelephony.nativeCallDirection() != "incoming" ||
+      NativeTelephony.nativeCallPhase() != "ringing"
+    ) {
+      return
+    }
+    val control = telecomCallControl ?: return
+    val peer = NativeTelephony.nativeCallPeer().orEmpty()
+    try {
+      promoteCallToForeground("incoming", "connecting", peer)
+    } catch (error: Exception) {
+      Log.e(TAG, "Call foreground service could not be started", error)
+      setFailure("バックグラウンド通話を開始できませんでした")
+      return
+    }
+    telecomCoroutineScope.launch {
+      when (control.answer(CallAttributesCompat.CALL_TYPE_AUDIO_CALL)) {
+        is CallControlResult.Success -> {
+          telecomMarkedActive = true
+          val error = NativeTelephony.nativeAnswer()
+          if (error != null) {
+            NativeTelephony.nativeReject()
+            requestTelecomDisconnect(DisconnectCause(DisconnectCause.ERROR))
+            cancelCallNotification()
+            setFailure(error)
+          }
+        }
+        else -> {
+          cancelCallForeground()
+          showCallNotification("incoming", "ringing", peer)
+        }
+      }
+    }
+  }
+
+  private fun rejectCallFromNotification() {
+    if (NativeTelephony.nativeCallDirection() != "incoming") return
+    NativeTelephony.nativeReject()
+    requestTelecomDisconnect(DisconnectCause(DisconnectCause.REJECTED))
+    cancelCallNotification()
+  }
+
+  private fun hangUpCallFromNotification() {
+    if (!NativeTelephony.nativeHasActiveCall()) return
+    NativeTelephony.nativeHangUp()
+    requestTelecomDisconnect(DisconnectCause(DisconnectCause.LOCAL))
+    cancelCallNotification()
+  }
+
+  private fun markTelecomCallActive() {
+    val control = telecomCallControl ?: return
+    telecomMarkedActive = true
+    telecomCoroutineScope.launch {
+      if (control.setActive() is CallControlResult.Error) {
+        telecomMarkedActive = false
+      }
+    }
+  }
+
+  private fun requestTelecomDisconnect(cause: DisconnectCause) {
+    if (telecomDisconnectRequested) return
+    telecomDisconnectRequested = true
+    pendingTelecomDisconnectCause = cause
+    val control = telecomCallControl ?: return
+    telecomCoroutineScope.launch {
+      control.disconnect(cause)
+    }
+  }
+
+  private fun disconnectNativeCall(cause: DisconnectCause) {
+    val error = if (cause.code == DisconnectCause.REJECTED &&
+      NativeTelephony.nativeCallPhase() == "ringing"
+    ) {
+      NativeTelephony.nativeReject()
+    } else {
+      NativeTelephony.nativeHangUp()
+    }
+    requireNativeCallSuccess(error)
+  }
+
+  private fun requireNativeCallSuccess(error: String?) {
+    if (error != null) {
+      throw IllegalStateException(error)
+    }
+  }
+
   private fun failPushWake(message: String) {
     if (!pushWakeActive) return
     val safeMessage = redactPushError(message)
     handler.removeCallbacks(pushDeadline)
-    NativeTelephony.nativeStop()
+    NativeTelephony.nativeStopDormant()
     setFailure(safeMessage)
     pushStore.recordFailed(pushReceivedAt, safeMessage)
     pushWakeActive = false
@@ -391,8 +653,12 @@ class TelephonyService : Service() {
   private fun finishPushWake() {
     if (!pushWakeActive) return
     handler.removeCallbacks(pushDeadline)
+    if (NativeTelephony.nativeHasActiveCall()) {
+      handler.postDelayed(pushDeadline, ACTIVE_CALL_CHECK_INTERVAL_MILLIS)
+      return
+    }
     stopMonitor()
-    NativeTelephony.nativeStop()
+    NativeTelephony.nativeStopDormant()
     pushStore.recordCompleted(pushReceivedAt)
     pushWakeActive = false
     setStopped()
@@ -405,6 +671,16 @@ class TelephonyService : Service() {
     handler.removeCallbacks(pushDeadline)
     pushWakeActive = false
     removePushForeground()
+  }
+
+  private fun stopNativeForServiceShutdown() {
+    val keepPushBinding = waitingPreferences().getBoolean(WAITING_ENABLED, false) &&
+      pushStore.loadPairing() != null
+    if (keepPushBinding) {
+      NativeTelephony.nativeStopDormant()
+    } else {
+      NativeTelephony.nativeStop()
+    }
   }
 
   private fun redactPushError(message: String): String {
@@ -439,6 +715,11 @@ class TelephonyService : Service() {
   }
 
   private fun removePushForeground() {
+    if (callForegroundActive) {
+      getSystemService(NotificationManager::class.java)
+        .cancel(PUSH_NOTIFICATION_ID)
+      return
+    }
     ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
   }
 
@@ -453,6 +734,114 @@ class TelephonyService : Service() {
       .build()
     getSystemService(NotificationManager::class.java)
       .notify(PUSH_FAILURE_NOTIFICATION_ID, notification)
+  }
+
+  private fun showCallNotification(direction: String, phase: String, peer: String) {
+    val notification = buildCallNotification(direction, phase, peer)
+    runCatching {
+      if (callForegroundActive) {
+        ServiceCompat.startForeground(
+          this,
+          CALL_NOTIFICATION_ID,
+          notification,
+          CALL_FOREGROUND_SERVICE_TYPES,
+        )
+      } else {
+        getSystemService(NotificationManager::class.java)
+          .notify(CALL_NOTIFICATION_ID, notification)
+      }
+      Log.i(
+        TAG,
+        "CallStyle notification posted: incoming=${direction == "incoming" && phase == "ringing"} " +
+          "phase=$phase foreground=$callForegroundActive",
+      )
+    }.onFailure { error ->
+      Log.e(TAG, "CallStyle notification could not be posted", error)
+    }
+  }
+
+  private fun promoteCallToForeground(direction: String, phase: String, peer: String) {
+    val notification = buildCallNotification(direction, phase, peer)
+    ServiceCompat.startForeground(
+      this,
+      CALL_NOTIFICATION_ID,
+      notification,
+      CALL_FOREGROUND_SERVICE_TYPES,
+    )
+    callForegroundActive = true
+    getSystemService(NotificationManager::class.java)
+      .cancel(PUSH_NOTIFICATION_ID)
+    Log.i(TAG, "Call foreground service started: direction=$direction phase=$phase")
+  }
+
+  private fun buildCallNotification(
+    direction: String,
+    phase: String,
+    peer: String,
+  ): android.app.Notification {
+    val incoming = direction == "incoming" && phase == "ringing"
+    val callerName = displayPeer(peer)
+    val caller = Person.Builder()
+      .setName(callerName)
+      .setUri(Uri.fromParts("sip", callerName, null).toString())
+      .setImportant(true)
+      .build()
+    val callStyle = if (incoming) {
+      NotificationCompat.CallStyle.forIncomingCall(
+        caller,
+        callActionPendingIntent(ACTION_REJECT_CALL, CALL_ACTION_REJECT_REQUEST),
+        callActionPendingIntent(ACTION_ANSWER_CALL, CALL_ACTION_ANSWER_REQUEST),
+      )
+    } else {
+      NotificationCompat.CallStyle.forOngoingCall(
+        caller,
+        callActionPendingIntent(ACTION_HANG_UP_CALL, CALL_ACTION_HANG_UP_REQUEST),
+      )
+    }
+    val channel = if (incoming) CALL_INCOMING_CHANNEL else CALL_ONGOING_CHANNEL
+    val activityIntent = mainActivityPendingIntent()
+    val notification = NotificationCompat.Builder(this, channel)
+      .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+      .setContentTitle(if (incoming) "着信" else "通話中")
+      .setContentText(callerName)
+      .setContentIntent(activityIntent)
+      .setFullScreenIntent(activityIntent, incoming)
+      .setCategory(NotificationCompat.CATEGORY_CALL)
+      .setPriority(NotificationCompat.PRIORITY_MAX)
+      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+      .setOngoing(true)
+      .setOnlyAlertOnce(true)
+      .setStyle(callStyle)
+      .build()
+    return notification
+  }
+
+  private fun cancelCallNotification() {
+    cancelCallForeground()
+    getSystemService(NotificationManager::class.java)
+      .cancel(CALL_NOTIFICATION_ID)
+  }
+
+  private fun cancelCallForeground() {
+    if (!callForegroundActive) return
+    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+    callForegroundActive = false
+  }
+
+  private fun callActionPendingIntent(action: String, requestCode: Int): PendingIntent =
+    PendingIntent.getService(
+      this,
+      requestCode,
+      Intent(this, TelephonyService::class.java).setAction(action),
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+  private fun displayPeer(peer: String): String {
+    val quotedName = Regex("\"([^\"]+)\"").find(peer)?.groupValues?.get(1)?.trim()
+    if (!quotedName.isNullOrEmpty()) return quotedName
+    val sipUser = Regex("""(?i)sip:([^@;>]+)""").find(peer)?.groupValues?.get(1)?.trim()
+    if (!sipUser.isNullOrEmpty()) return sipUser
+    return peer.trim().takeIf(String::isNotEmpty) ?: "発信者不明"
   }
 
   private fun mainActivityPendingIntent(): PendingIntent =
@@ -484,6 +873,34 @@ class TelephonyService : Service() {
         NotificationManager.IMPORTANCE_DEFAULT,
       ).apply {
         description = "Push受信後にSIPへ接続できなかった場合に表示します"
+      },
+    )
+    val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+    val ringtoneAttributes = AudioAttributes.Builder()
+      .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+      .setLegacyStreamType(AudioManager.STREAM_RING)
+      .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+      .build()
+    manager.createNotificationChannel(
+      NotificationChannel(
+        CALL_INCOMING_CHANNEL,
+        "着信",
+        NotificationManager.IMPORTANCE_HIGH,
+      ).apply {
+        description = "着信音と応答・拒否操作を表示します"
+        enableVibration(true)
+        setSound(ringtone, ringtoneAttributes)
+      },
+    )
+    manager.createNotificationChannel(
+      NotificationChannel(
+        CALL_ONGOING_CHANNEL,
+        "通話中",
+        NotificationManager.IMPORTANCE_DEFAULT,
+      ).apply {
+        description = "通話中の切断操作を表示します"
+        setSound(null, null)
+        enableVibration(false)
       },
     )
   }
@@ -573,7 +990,12 @@ class TelephonyService : Service() {
   }
 
   companion object {
+    private const val TAG = "TsumujiTelephony"
     const val ACTION_PUSH_WAKE = "app.tsumujiphone.local.action.PUSH_WAKE"
+    const val ACTION_ANSWER_CALL = "app.tsumujiphone.local.action.ANSWER_CALL"
+    const val ACTION_REJECT_CALL = "app.tsumujiphone.local.action.REJECT_CALL"
+    const val ACTION_HANG_UP_CALL = "app.tsumujiphone.local.action.HANG_UP_CALL"
+    private const val ACTION_CALL_ACTIVE = "app.tsumujiphone.local.action.CALL_ACTIVE"
     const val EXTRA_PUSH_RECEIVED_AT = "push_received_at"
 
     internal fun isWaitingEnabled(context: Context): Boolean =
@@ -593,9 +1015,19 @@ class TelephonyService : Service() {
     private const val RECOVERY_RETRY_INTERVAL_MILLIS = 5_000L
     private const val RECOVERY_TIMEOUT_MILLIS = 60_000L
     private const val PUSH_LIFETIME_MILLIS = 30_000L
+    private const val ACTIVE_CALL_CHECK_INTERVAL_MILLIS = 1_000L
     private const val PUSH_ACTIVE_CHANNEL = "push_wake_active"
     private const val PUSH_FAILURE_CHANNEL = "push_wake_failure"
+    private const val CALL_INCOMING_CHANNEL = "incoming_calls_v1"
+    private const val CALL_ONGOING_CHANNEL = "ongoing_calls_v1"
     private const val PUSH_NOTIFICATION_ID = 51_001
     private const val PUSH_FAILURE_NOTIFICATION_ID = 51_002
+    private const val CALL_NOTIFICATION_ID = 51_003
+    private const val CALL_ACTION_ANSWER_REQUEST = 51_011
+    private const val CALL_ACTION_REJECT_REQUEST = 51_012
+    private const val CALL_ACTION_HANG_UP_REQUEST = 51_013
+    private const val CALL_FOREGROUND_SERVICE_TYPES =
+      ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
   }
 }

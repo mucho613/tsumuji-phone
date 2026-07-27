@@ -74,10 +74,15 @@
 - 同一 SIP ユーザの再ペアリングは以前の端末対応を置き換える
 - 起動信号の data は `type=wake` と、暗号学的乱数で生成した 256 bit の
   Base64URL `callToken` だけとする。TTL は 30 秒、collapse は使用しない
-- SIP 登録は起動信号の受信から最大 30 秒で無条件に停止する。登録応答は 10 秒待ち、
-  失敗時は自動再試行しない
-- 登録中は無音・低優先度の「着信接続中」通知を表示する。成功時は30秒後に通知を
-  消し、失敗時だけ通常優先度の「着信接続に失敗しました」通知を残す
+- SIP 登録応答は 10 秒待ち、失敗時は自動再試行しない。30 秒以内に着信しなければ
+  PJSIP を deREGISTER せず休止して foreground service を終了する
+- 登録中は無音・低優先度の「着信接続中」通知を表示する。着信時は Core Telecom
+  へ通話を登録し、着信音付き CallStyle 通知へ置き換える。通知から応答、拒否、
+  通話終了を操作できる
+- 通話中は Core Telecom の foreground 実行優先度に加え、マイク／通話型 foreground
+  service と同じ CallStyle 通知 ID を維持し、
+  30 秒を超えても PJSIP と通話を継続する。通話終了後に PJSIP を deREGISTER
+  せず休止し、通知と service を終了する
 - 通知権限は設定画面の操作時だけ要求する。権限がない場合は Push を処理せず、
   通常の SIP 発着信機能は制限しない
 - Firebase Installation ID（FID）は Android Keystore で暗号化し、Android native
@@ -90,9 +95,11 @@
 - gateway は専用サービスアカウントで FCM HTTP v1 API の `fid` 宛へ送り、
   FID、call token、payload を表示しない
 - バッテリー最適化の除外を必須としない
+- OpenSIPS は着信 INVITE を保留して Push gateway を起動し、同じ端末 ID の
+  再登録後に新しい SIP branch を作る。CANCEL は保留中を含む同じ transaction
+  へ中継する
 
-OpenSIPS の INVITE 保留、cancel、実着信、Core-Telecom、CallStyle 通知は次の段階で
-接続する。Android の強制停止後の Push 受信は OS の制約により対象外とする。
+Android の強制停止後の Push 受信は OS の制約により対象外とする。
 
 ## 初期対象外
 

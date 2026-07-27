@@ -43,6 +43,25 @@ impl PjsipEngine {
             ))
         }
     }
+
+    /// Stop the local SIP stack without removing a push-enabled registrar binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when native PJSIP cannot shut down cleanly.
+    pub fn stop_dormant(&mut self) -> Result<(), EngineError> {
+        #[cfg(feature = "native-pjsip")]
+        {
+            self.native.stop_dormant()
+        }
+        #[cfg(not(feature = "native-pjsip"))]
+        {
+            self.state
+                .apply(telephony_core::EngineEvent::RegistrationChanged(
+                    telephony_core::RegistrationState::Stopped,
+                ))
+        }
+    }
 }
 
 #[allow(clippy::needless_return)]

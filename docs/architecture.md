@@ -121,7 +121,9 @@ FirebaseMessagingService
     v
 TelephonyService -- Tailscale/SIP --> Asterisk
     |
-    +-- success or failure, then unconditional stop by 30 s
+    +-- no INVITE: dormant stop by 30 s
+    |
+    +-- INVITE: Core Telecom + CallStyle -> call -> dormant stop
 ```
 
 FCM SDK は registration token ではなく FID の直接送信 API を使用します。
@@ -135,11 +137,14 @@ FCM callback は高優先度、data key の完全一致、通知権限、待受�
 有効な wake は `shortService` 型 foreground service を起動し、即時に
 「着信接続中」を表示します。Tauri Activity を作らないプロセス起動にも対応するため、
 Android Service と Tauri UI は遅延初期化した同じ Rust/PJSIP engine を共有します。
-登録応答は10秒待ち、起動信号の受信から30秒で成功・失敗・通話状態にかかわらず
-PJSIP と foreground service を停止します。
+登録応答は10秒待ちます。30秒以内に着信しなければ PJSIP は deREGISTER を送らず
+休止し、OpenSIPS 上の Push 対応 Contact を維持します。
 
-Push gateway、pairing、Contact の端末 ID は実装済みです。OpenSIPS から gateway を
-呼び出す処理、INVITE 保留、cancel、実着信 UI は次の段階で接続します。
+OpenSIPS は Asterisk からの着信 INVITE を保留し、Contact のランダム端末 ID を使って
+Push gateway を呼びます。端末が再登録すると `mid_registrar` が保留中 INVITE に
+新しい branch を作ります。端末の SIP stack は待受窓と通話の終了時に deREGISTER
+しないため、`pn_skip_pn_interval=0` とし、連続着信でも毎回 Push と再登録を行います。
+CANCEL は同じ transaction に中継します。
 
 ## Android プラットフォーム層
 
@@ -155,8 +160,12 @@ Tailscale IPv4 から自動決定し、設定画面へ入力欄を出しませ�
 します。FID は待受停止時も維持します。
 
 PJSIP は Oboe を使用し、端末音声48 kHz と PCMU/RTP 8 kHz の変換を担当します。
-バッテリー最適化の除外は要求しません。Core-Telecom と CallStyle 通知は実着信
-フェーズまで延期します。
+バッテリー最適化の除外は要求しません。発着信は Core Telecom へ登録し、同じ
+CallStyle 通知 ID を通話終了まで更新します。着信通知は着信音、全画面 Intent、
+応答・拒否操作を持ち、通話中通知は通話終了操作を持ちます。Core Telecom の
+foreground 実行優先度に加え、応答後はマイク／通話型 foreground service として
+同じ通知を維持します。これにより Activity を前面へ出さず、30秒を超える通話でも
+process とバックグラウンド音声を維持します。
 
 ## 配布対象
 

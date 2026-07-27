@@ -35,7 +35,13 @@ class TsumujiFirebaseMessagingService : FirebaseMessagingService() {
     }
     val nativeState = runCatching { NativeTelephony.nativeRegistrationState() }
       .getOrDefault("stopped")
-    if (nativeState == "registered" || nativeState == "registering") {
+    if (nativeState == "registered") {
+      NativeTelephony.nativeReregister()?.let { error ->
+        store.recordIgnored(receivedAt, error)
+      }
+      return
+    }
+    if (nativeState == "registering") {
       store.recordIgnored(receivedAt)
       return
     }

@@ -327,6 +327,7 @@ int tp_engine_start(const tp_config *config,
                  ";pn-provider=fcm;pn-prid=%s;pn-param=app.tsumujiphone.local",
                  config->push_device_id);
         account_config.reg_contact_uri_params = tp_pj_str(push_contact_params);
+        account_config.reg_timeout = 30U * 24U * 60U * 60U;
     }
 #if defined(__ANDROID__)
     account_config.reg_retry_interval = 0;
@@ -356,7 +357,7 @@ fail:
     return status != PJ_SUCCESS ? status : -1;
 }
 
-int tp_engine_stop(tp_engine *engine) {
+static int tp_engine_stop_with_flags(tp_engine *engine, unsigned flags) {
     int status;
     if (engine == NULL) {
         return 0;
@@ -368,10 +369,18 @@ int tp_engine_stop(tp_engine *engine) {
     if (status != 0) {
         return status;
     }
-    status = pjsua_destroy();
+    status = pjsua_destroy2(flags);
     active_engine = NULL;
     free(engine);
     return status;
+}
+
+int tp_engine_stop(tp_engine *engine) {
+    return tp_engine_stop_with_flags(engine, 0);
+}
+
+int tp_engine_stop_dormant(tp_engine *engine) {
+    return tp_engine_stop_with_flags(engine, PJSUA_DESTROY_NO_TX_MSG);
 }
 
 int tp_engine_reregister(tp_engine *engine) {

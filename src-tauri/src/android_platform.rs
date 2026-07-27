@@ -12,7 +12,9 @@ use tauri::{
     plugin::{Builder, PluginHandle, TauriPlugin},
     Manager, Wry,
 };
-use telephony_core::{AccountConfig, PhoneSnapshot, RegistrationState, TelephonyEngine};
+use telephony_core::{
+    AccountConfig, CallDirection, CallPhase, PhoneSnapshot, RegistrationState, TelephonyEngine,
+};
 use telephony_pjsip::PjsipEngine;
 
 const PLUGIN_IDENTIFIER: &str = "app.tsumujiphone.local";
@@ -221,6 +223,15 @@ pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeStop(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeStopDormant(
+    env: JNIEnv<'_>,
+    _instance: JObject<'_>,
+) -> jstring {
+    let result = with_engine(|engine| engine.stop_dormant().map_err(|error| error.to_string()));
+    optional_java_string(env, result.err())
+}
+
+#[no_mangle]
 pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeReregister(
     env: JNIEnv<'_>,
     _instance: JObject<'_>,
@@ -235,6 +246,78 @@ pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeHasActi
     _instance: JObject<'_>,
 ) -> jboolean {
     u8::from(with_engine(|engine| Ok(engine.snapshot().call.is_some())).unwrap_or(false))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeAnswer(
+    env: JNIEnv<'_>,
+    _instance: JObject<'_>,
+) -> jstring {
+    let result = with_engine(|engine| engine.answer().map_err(|error| error.to_string()));
+    optional_java_string(env, result.err())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeReject(
+    env: JNIEnv<'_>,
+    _instance: JObject<'_>,
+) -> jstring {
+    let result = with_engine(|engine| engine.reject().map_err(|error| error.to_string()));
+    optional_java_string(env, result.err())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeHangUp(
+    env: JNIEnv<'_>,
+    _instance: JObject<'_>,
+) -> jstring {
+    let result = with_engine(|engine| engine.hang_up().map_err(|error| error.to_string()));
+    optional_java_string(env, result.err())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeCallDirection(
+    env: JNIEnv<'_>,
+    _instance: JObject<'_>,
+) -> jstring {
+    let direction = with_engine(|engine| {
+        Ok(match engine.snapshot().call.map(|call| call.direction) {
+            Some(CallDirection::Incoming) => "incoming",
+            Some(CallDirection::Outgoing) => "outgoing",
+            None => "none",
+        }
+        .to_string())
+    });
+    optional_java_string(env, Some(direction.unwrap_or_else(|_| "none".to_string())))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeCallPhase(
+    env: JNIEnv<'_>,
+    _instance: JObject<'_>,
+) -> jstring {
+    let phase = with_engine(|engine| {
+        Ok(match engine.snapshot().call.map(|call| call.phase) {
+            Some(CallPhase::Ringing) => "ringing",
+            Some(CallPhase::Dialing) => "dialing",
+            Some(CallPhase::Connecting) => "connecting",
+            Some(CallPhase::Active) => "active",
+            Some(CallPhase::Ending) => "ending",
+            None => "none",
+        }
+        .to_string())
+    });
+    optional_java_string(env, Some(phase.unwrap_or_else(|_| "none".to_string())))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeCallPeer(
+    env: JNIEnv<'_>,
+    _instance: JObject<'_>,
+) -> jstring {
+    let peer = with_engine(|engine| Ok(engine.snapshot().call.map(|call| call.peer)))
+        .unwrap_or_else(|_| None);
+    optional_java_string(env, peer)
 }
 
 #[no_mangle]

@@ -17,9 +17,23 @@ internal object NativeTelephony {
 
   external fun nativeStop(): String?
 
+  external fun nativeStopDormant(): String?
+
   external fun nativeReregister(): String?
 
   external fun nativeHasActiveCall(): Boolean
+
+  external fun nativeAnswer(): String?
+
+  external fun nativeReject(): String?
+
+  external fun nativeHangUp(): String?
+
+  external fun nativeCallDirection(): String
+
+  external fun nativeCallPhase(): String
+
+  external fun nativeCallPeer(): String?
 
   external fun nativeRegistrationState(): String
 

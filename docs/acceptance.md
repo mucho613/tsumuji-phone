@@ -62,8 +62,16 @@
 - アプリのタスクを閉じた状態、`adb shell am kill` 後、画面ロック＋Dozeから wake
   を受信して Activity を開かずに foreground service を開始する
 - gateway の wake API 要求から15秒以内、FCM受信から10秒以内にAsteriskへSIP登録する
-- 「着信接続中」通知は無音・低優先度で、成功後はFCM受信から30秒以内に
-  SIP登録、foreground service、通知が無条件で終了する
+- 「着信接続中」通知は無音・低優先度で、着信がなければFCM受信から30秒以内に
+  SIP登録、foreground service、通知が終了する
+- 保留された INVITE に対して端末が再登録すると着信音付き CallStyle 通知が表示され、
+  通知の応答・拒否で SIP と Core Telecom の状態が一致する
+- 通知から応答した後に Activity を前面へ出さなくても双方向音声が流れ、通話は
+  30秒を超えて維持され、CallStyle 通知の「通話終了」で
+  SIP、Core Telecom、通知がすべて終了する
+- 通話終了直後の再着信でも毎回 Push と再登録が行われ、同じ内線へ再接続できる
+- アプリからの発信も Core Telecom と CallStyle 通知へ登録され、通知の
+  「通話終了」で切断できる
 - 登録失敗／10秒無応答時は再試行せず、「着信接続に失敗しました」通知を残し、
   次回起動時に識別子を含まない詳細理由と所要時間を表示する
 - 同じ call token の再送を2分間無視し、生値を保存・記録しない

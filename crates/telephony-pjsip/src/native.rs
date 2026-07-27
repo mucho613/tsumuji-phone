@@ -42,6 +42,7 @@ unsafe extern "C" {
         out_engine: *mut *mut TpEngine,
     ) -> c_int;
     fn tp_engine_stop(engine: *mut TpEngine) -> c_int;
+    fn tp_engine_stop_dormant(engine: *mut TpEngine) -> c_int;
     fn tp_engine_reregister(engine: *mut TpEngine) -> c_int;
     fn tp_engine_dial(engine: *mut TpEngine, number: *const c_char) -> c_int;
     fn tp_engine_answer(engine: *mut TpEngine) -> c_int;
@@ -128,10 +129,21 @@ impl NativeEngine {
     }
 
     pub fn stop(&mut self) -> Result<(), EngineError> {
+        self.stop_with(|handle| unsafe { tp_engine_stop(handle) })
+    }
+
+    pub fn stop_dormant(&mut self) -> Result<(), EngineError> {
+        self.stop_with(|handle| unsafe { tp_engine_stop_dormant(handle) })
+    }
+
+    fn stop_with(
+        &mut self,
+        operation: impl FnOnce(*mut TpEngine) -> c_int,
+    ) -> Result<(), EngineError> {
         let Some(handle) = self.handle.take() else {
             return Ok(());
         };
-        let status = unsafe { tp_engine_stop(handle.as_ptr()) };
+        let status = operation(handle.as_ptr());
         let result = if status == 0 {
             Ok(())
         } else {
