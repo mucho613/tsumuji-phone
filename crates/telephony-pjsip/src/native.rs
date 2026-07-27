@@ -16,6 +16,7 @@ struct TpConfig {
     local_address: *const c_char,
     user_id: *const c_char,
     password: *const c_char,
+    push_device_id: *const c_char,
     sip_port: u16,
     rtp_port_start: u16,
     rtp_port_end: u16,
@@ -93,11 +94,13 @@ impl NativeEngine {
         let local_address = to_c_string(&config.local_address)?;
         let user_id = to_c_string(&config.user_id)?;
         let password = to_c_string(&config.password)?;
+        let push_device_id = to_c_string(config.push_device_id.as_deref().unwrap_or(""))?;
         let native_config = TpConfig {
             server: server.as_ptr(),
             local_address: local_address.as_ptr(),
             user_id: user_id.as_ptr(),
             password: password.as_ptr(),
+            push_device_id: push_device_id.as_ptr(),
             sip_port: config.sip_port,
             rtp_port_start: config.rtp_port_start,
             rtp_port_end: config.rtp_port_end,

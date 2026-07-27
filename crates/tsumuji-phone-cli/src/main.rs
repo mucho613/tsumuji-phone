@@ -137,6 +137,7 @@ fn run_call_test(
         rtp_port_end: 40_009,
         user_id,
         password,
+        push_device_id: None,
     };
     let mut engine = PjsipEngine::default();
     engine.start(&config)?;

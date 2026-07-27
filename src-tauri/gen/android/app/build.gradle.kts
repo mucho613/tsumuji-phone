@@ -34,7 +34,7 @@ android {
     }
     buildTypes {
         getByName("debug") {
-            manifestPlaceholders["usesCleartextTraffic"] = "true"
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false

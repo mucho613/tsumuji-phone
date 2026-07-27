@@ -14,6 +14,7 @@ typedef struct tp_config {
     const char *local_address;
     const char *user_id;
     const char *password;
+    const char *push_device_id;
     uint16_t sip_port;
     uint16_t rtp_port_start;
     uint16_t rtp_port_end;

@@ -43,20 +43,25 @@
 - Tailscale 未接続やマイク権限なしを登録前に検出し、解決に必要な理由を表示する
 - FCM payload に `type=wake` と一時 call token 以外の情報を含めない
 
-### Android FCM 起動試験
+### Android Push 待受
 
 - Firebase 構成ファイルがなければ Android build が配置方法を示して早期失敗する
 - 通知権限は設定画面のボタンを押したときだけ要求され、拒否しても通常のSIP発着信を
   使用できる。拒否後は Android の通知設定を開ける
-- FID は Android Keystore で暗号化され、Rust、Web UI、ログに値が出ない。
-  設定画面のボタンから Android native が直接クリップボードへコピーする
-- ローカル送信スクリプトは FID と call token と payload を表示せず、成功／失敗
-  だけを出力する
+- 10分の pairing code は一度だけ使え、再使用と期限切れを拒否する
+- ペアリング後に gateway URL とランダム端末 ID が復元され、端末資格情報は
+  Android Keystore で保護される
+- FID は Android Keystore で暗号化され、Rust、Web UI、SIP Contact、
+  クリップボード、ログに値が出ない
+- REGISTER の Contact に FID でなくランダム端末 ID の `pn-prid` が含まれる
+- Push gateway の内部 wake API は loopback だけで到達でき、端末向け API は
+  Tailscale Serve の HTTPS 経由で到達できる
+- gateway は FID、端末資格情報、call token、payload をログへ出さない
 - data-only、高優先度、TTL 30秒、collapseなしで、`type=wake` と256 bitの
   Base64URL `callToken` だけを送る
 - アプリのタスクを閉じた状態、`adb shell am kill` 後、画面ロック＋Dozeから wake
   を受信して Activity を開かずに foreground service を開始する
-- ローカル送信開始から15秒以内、FCM受信から10秒以内にAsteriskへSIP登録する
+- gateway の wake API 要求から15秒以内、FCM受信から10秒以内にAsteriskへSIP登録する
 - 「着信接続中」通知は無音・低優先度で、成功後はFCM受信から30秒以内に
   SIP登録、foreground service、通知が無条件で終了する
 - 登録失敗／10秒無応答時は再試行せず、「着信接続に失敗しました」通知を残し、

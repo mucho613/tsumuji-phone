@@ -3,9 +3,6 @@ package app.tsumujiphone.local
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.os.PersistableBundle
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
@@ -23,6 +20,12 @@ internal class StartWaitingArgs {
   lateinit var server: String
   lateinit var userId: String
   var password: String? = null
+}
+
+@InvokeArg
+internal class PairPushGatewayArgs {
+  lateinit var gatewayUrl: String
+  lateinit var pairingCode: String
 }
 
 @TauriPlugin
@@ -145,19 +148,20 @@ class TelephonyPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   @Command
-  fun copyPushFid(invoke: Invoke) {
-    val fid = PushStateStore(activity.applicationContext).loadFid()
-    if (fid == null) {
-      invoke.reject("FCMの準備がまだ完了していません")
-      return
-    }
-    val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    val clip = ClipData.newPlainText("Tsumuji Phone FCM FID", fid)
-    clip.description.extras = PersistableBundle().apply {
-      putBoolean("android.content.extra.IS_SENSITIVE", true)
-    }
-    clipboard.setPrimaryClip(clip)
-    invoke.resolve()
+  fun pairPushGateway(invoke: Invoke) {
+    val args = invoke.parseArgs(PairPushGatewayArgs::class.java)
+    Thread {
+      runCatching {
+        PushGatewayClient(activity.applicationContext).pair(args.gatewayUrl, args.pairingCode)
+      }.onSuccess {
+        invoke.resolve()
+      }.onFailure { error ->
+        PushStateStore(activity.applicationContext).recordPairingFailure(
+          error.message ?: "Push gatewayとのペアリングに失敗しました",
+        )
+        invoke.reject(error.message ?: "Push gatewayとのペアリングに失敗しました")
+      }
+    }.start()
   }
 
   private fun withService(invoke: Invoke, operation: (TelephonyService) -> Unit) {
@@ -187,6 +191,10 @@ class TelephonyPlugin(private val activity: Activity) : Plugin(activity) {
     val push = PushStateStore(activity.applicationContext).status()
     put("notificationPermission", push.notificationPermission)
     put("pushFidReady", push.fidReady)
+    put("pushPaired", push.paired)
+    put("pushGatewayUrl", push.gatewayUrl)
+    put("pushDeviceId", push.deviceId)
+    put("pushPairingError", push.pairingError)
     put("pushSetupError", push.setupError)
     put("lastPushResult", push.lastResult)
     put("lastPushReceivedAt", push.lastReceivedAt)

@@ -30,6 +30,10 @@ pub struct AndroidStatus {
     pub saved_user_id: Option<String>,
     pub notification_permission: String,
     pub push_fid_ready: bool,
+    pub push_paired: bool,
+    pub push_gateway_url: Option<String>,
+    pub push_device_id: Option<String>,
+    pub push_pairing_error: Option<String>,
     pub push_setup_error: Option<String>,
     pub last_push_result: Option<String>,
     pub last_push_received_at: Option<i64>,
@@ -55,6 +59,13 @@ struct StartWaitingPayload {
     server: String,
     user_id: String,
     password: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PairPushGatewayPayload {
+    gateway_url: String,
+    pairing_code: String,
 }
 
 impl AndroidStatus {
@@ -129,24 +140,31 @@ impl AndroidPlatform {
             .map_err(|error| error.to_string())
     }
 
-    pub fn copy_push_fid(&self) -> Result<(), String> {
+    pub fn pair_push_gateway(
+        &self,
+        gateway_url: String,
+        pairing_code: String,
+    ) -> Result<(), String> {
         self.0
-            .run_mobile_plugin::<()>("copyPushFid", ())
+            .run_mobile_plugin::<()>(
+                "pairPushGateway",
+                PairPushGatewayPayload {
+                    gateway_url,
+                    pairing_code,
+                },
+            )
             .map_err(|error| error.to_string())
     }
 }
 
 pub fn shared_engine() -> Arc<Mutex<PjsipEngine>> {
-    Arc::clone(
-        ANDROID_ENGINE.get_or_init(|| Arc::new(Mutex::new(PjsipEngine::default()))),
-    )
+    Arc::clone(ANDROID_ENGINE.get_or_init(|| Arc::new(Mutex::new(PjsipEngine::default()))))
 }
 
 fn with_engine<T>(
     operation: impl FnOnce(&mut PjsipEngine) -> Result<T, String>,
 ) -> Result<T, String> {
-    let engine = ANDROID_ENGINE
-        .get_or_init(|| Arc::new(Mutex::new(PjsipEngine::default())));
+    let engine = ANDROID_ENGINE.get_or_init(|| Arc::new(Mutex::new(PjsipEngine::default())));
     let mut engine = engine.lock().map_err(|error| error.to_string())?;
     operation(&mut engine)
 }
@@ -172,10 +190,12 @@ pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeStart(
     user_id: JString<'_>,
     password: JString<'_>,
     local_address: JString<'_>,
+    push_device_id: JString<'_>,
 ) -> jstring {
     let result = (|| {
         let java_vm = env.get_java_vm().map_err(|error| error.to_string())?;
         telephony_pjsip::set_android_java_vm(java_vm.get_java_vm_pointer() as usize);
+        let push_device_id = read_java_string(&mut env, &push_device_id)?;
         let config = AccountConfig {
             server: read_java_string(&mut env, &server)?,
             local_address: read_java_string(&mut env, &local_address)?,
@@ -184,6 +204,7 @@ pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeStart(
             rtp_port_end: 40_009,
             user_id: read_java_string(&mut env, &user_id)?,
             password: read_java_string(&mut env, &password)?,
+            push_device_id: (!push_device_id.is_empty()).then_some(push_device_id),
         };
         with_engine(|engine| engine.start(&config).map_err(|error| error.to_string()))
     })();

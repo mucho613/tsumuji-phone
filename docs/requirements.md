@@ -59,12 +59,19 @@
 - Android Service が同一プロセス内の Rust/PJSIP を所有し、UI は状態を監視
 - PJSIP の音声 backend は Oboe とし、端末側は 48 kHz、SIP/RTP は PCMU 8 kHz
 
-### Android FCM 起動試験
+### Android Push 待受
 
 - Google Play Services と Firebase Cloud Messaging（FCM）を使用し、アプリを
   閉じている間は SIP 登録や foreground service を常駐させない
-- FCM の高優先度 data-only 起動信号を受信したときだけ、短時間の foreground
+- tailnet 内の Push gateway が FCM の高優先度 data-only 起動信号を送信したときだけ、
+  短時間の foreground
   service から保存済み設定を使って Asterisk へ登録する
+- Push gateway の端末向け API は loopback で待ち受け、Tailscale Serve の HTTPS
+  だけで公開する。内部 wake API は別の loopback ポートから公開しない
+- Ubuntu 上で SIP ユーザに紐づく10分・一度限りの pairing code を発行する
+- gateway は128 bitのランダム端末 IDと256 bitの端末資格情報を発行し、Android は
+  資格情報を Keystore で保護する。gateway は資格情報の hash だけを保存する
+- 同一 SIP ユーザの再ペアリングは以前の端末対応を置き換える
 - 起動信号の data は `type=wake` と、暗号学的乱数で生成した 256 bit の
   Base64URL `callToken` だけとする。TTL は 30 秒、collapse は使用しない
 - SIP 登録は起動信号の受信から最大 30 秒で無条件に停止する。登録応答は 10 秒待ち、
@@ -73,18 +80,19 @@
   消し、失敗時だけ通常優先度の「着信接続に失敗しました」通知を残す
 - 通知権限は設定画面の操作時だけ要求する。権限がない場合は Push を処理せず、
   通常の SIP 発着信機能は制限しない
-- Firebase Installation ID（FID）は Android Keystore で暗号化して保存し、Rust、
-  Web UI、ログへ値を返さない。設定画面の操作で Android native から直接
-  クリップボードへコピーする
+- Firebase Installation ID（FID）は Android Keystore で暗号化し、Android native
+  から pairing／更新 API へ直接送る。FID を Rust、Web UI、SIP Contact、
+  クリップボード、ログへ出さない
+- SIP Contact は FID ではなく gateway が発行したランダム端末 ID を
+  `pn-prid` に載せる
 - 同一 `callToken` はハッシュだけを保存して2分間重複排除し、token をログへ出さない
 - 待受停止中、SIP登録済み、またはSIP登録中の起動信号は既存状態を変えず無視する
-- Windows のローカル送信スクリプトは専用サービスアカウントと実行時入力の FID
-  を使い、HTTP v1 API の `fid` 宛へ送る。FID、call token、payload は表示しない
+- gateway は専用サービスアカウントで FCM HTTP v1 API の `fid` 宛へ送り、
+  FID、call token、payload を表示しない
 - バッテリー最適化の除外を必須としない
 
-実着信、Push gateway、pairing、OpenSIPS の INVITE 保留、cancel、Core-Telecom、
-CallStyle 通知はこの起動試験の対象外とする。Android の強制停止後の Push 受信も
-OS の制約により対象外とする。
+OpenSIPS の INVITE 保留、cancel、実着信、Core-Telecom、CallStyle 通知は次の段階で
+接続する。Android の強制停止後の Push 受信は OS の制約により対象外とする。
 
 ## 初期対象外
 

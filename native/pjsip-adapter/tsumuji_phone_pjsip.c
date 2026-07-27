@@ -225,10 +225,12 @@ int tp_engine_start(const tp_config *config,
     pj_status_t status;
     char identity[512];
     char registrar[512];
+    char push_contact_params[256];
 
     if (config == NULL || callback == NULL || out_engine == NULL ||
         config->server == NULL || config->local_address == NULL ||
         config->user_id == NULL || config->password == NULL ||
+        config->push_device_id == NULL ||
         active_engine != NULL) {
         return -1;
     }
@@ -319,6 +321,13 @@ int tp_engine_start(const tp_config *config,
     account_config.cred_info[0].username = tp_pj_str(config->user_id);
     account_config.cred_info[0].data_type = PJSIP_CRED_DATA_PLAIN_PASSWD;
     account_config.cred_info[0].data = tp_pj_str(config->password);
+    if (config->push_device_id[0] != '\0') {
+        snprintf(push_contact_params,
+                 sizeof(push_contact_params),
+                 ";pn-provider=fcm;pn-prid=%s;pn-param=app.tsumujiphone.local",
+                 config->push_device_id);
+        account_config.reg_contact_uri_params = tp_pj_str(push_contact_params);
+    }
 #if defined(__ANDROID__)
     account_config.reg_retry_interval = 0;
     account_config.reg_first_retry_interval = 0;

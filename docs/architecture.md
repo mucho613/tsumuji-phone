@@ -68,13 +68,49 @@ SIP登録を常駐させません。
 通話中は変更適用、待受停止、再接続を禁止します。登録中は番号入力を許可しますが、
 発信を予約せず、登録完了まで発信操作を無効にします。
 
-### FCM 起動試験
+### Push gateway と端末ペアリング
 
-現フェーズは実着信を扱わず、アプリ終了中に FCM がプロセスを起動し、画面を開かず
-PJSIP 登録を完了できるかを縦切りで検証します。
+アプリ終了中の着信では、tailnet 内で常時稼働する Push gateway が FCM の
+起動信号だけを Android へ送ります。SIP 信号と音声は FCM や gateway を通りません。
 
 ```text
-Windows test sender
+OpenSIPS -- device ID --> Push gateway -- FID --> FCM
+                                              |
+                                              | data-only: type=wake, callToken
+                                              v
+                                     FirebaseMessagingService
+                                              |
+                                              v
+                                      TelephonyService
+                                              |
+                                              +-- Tailscale/SIP --> OpenSIPS/Asterisk
+```
+
+Push gateway は Ubuntu サーバーの loopback だけで待ち受けます。端末から使う
+pairing API と FID 更新 API のみを Tailscale Serve の HTTPS で tailnet へ公開し、
+OpenSIPS が使う wake API は別ポートの loopback に留めます。
+
+Ubuntu 上で SIP ユーザに紐づく10分・一度限りの pairing code を発行します。
+Android native は pairing code と FID を HTTPS で gateway へ送り、gateway が生成した
+128 bit のランダムな端末 ID と 256 bit の端末資格情報を受け取ります。端末資格情報は
+Android Keystore で保護し、gateway は SHA-256 hash だけを SQLite に保存します。
+同じ SIP ユーザを再ペアリングした場合は以前の端末対応を置き換えます。
+
+FID は Android native と Push gateway の境界内だけで扱い、Rust、Web UI、SIP、
+Contact、ログには出しません。SQLite は gateway 実行ユーザだけが読める権限にします。
+SIP REGISTER の Contact URI には FID ではなく次の情報を載せます。
+
+```text
+;pn-provider=fcm;pn-prid=<random device ID>;pn-param=app.tsumujiphone.local
+```
+
+Firebase SDK が FID を更新した場合、Android native は保存済み端末資格情報を使って
+gateway の対応表だけを更新します。
+
+### FCM 起動処理
+
+```text
+Push gateway
     | HTTPS: FCM HTTP v1 (FID, high priority, TTL 30 s)
     v
 Firebase Cloud Messaging
@@ -90,8 +126,7 @@ TelephonyService -- Tailscale/SIP --> Asterisk
 
 FCM SDK は registration token ではなく FID の直接送信 API を使用します。
 `onRegistered(installationId)` で受け取った FID は専用の Android Keystore 鍵で
-暗号化し、Android native 内だけで扱います。ローカル送信時も FID はコマンドライン
-引数にせず、実行後の入力欄へ貼り付けます。
+暗号化します。
 
 FCM callback は高優先度、data key の完全一致、通知権限、待受意図、call token の
 形式と重複を検証します。call token の生値は Service へ渡さず、SHA-256 hash だけを
@@ -103,8 +138,8 @@ Android Service と Tauri UI は遅延初期化した同じ Rust/PJSIP engine �
 登録応答は10秒待ち、起動信号の受信から30秒で成功・失敗・通話状態にかかわらず
 PJSIP と foreground service を停止します。
 
-Push gateway、pairing、OpenSIPS、INVITE 保留、cancel、実着信は後続設計まで
-実装しません。
+Push gateway、pairing、Contact の端末 ID は実装済みです。OpenSIPS から gateway を
+呼び出す処理、INVITE 保留、cancel、実着信 UI は次の段階で接続します。
 
 ## Android プラットフォーム層
 
@@ -113,8 +148,8 @@ service の状態を監視します。ユーザー向けの待受状態は「待
 「待受中」「接続失敗」の四つに統一します。通話の有無と段階は待受状態とは別に
 `PhoneSnapshot` で表します。
 
-SIP パスワードは Android Keystore で保護し、保存先は一件だけとします。FID は
-別の Android Keystore 鍵で保護します。ローカル SIP アドレスは
+SIP パスワードと Push gateway の端末資格情報は別々の Android Keystore 鍵で保護し、
+保存先は各一件だけとします。FID も専用の鍵で保護します。ローカル SIP アドレスは
 Tailscale IPv4 から自動決定し、設定画面へ入力欄を出しません。明示的な待受停止では
 自動開始の意図を解除しますが、保存済み SIP サーバー、ユーザ ID、パスワードは維持
 します。FID は待受停止時も維持します。

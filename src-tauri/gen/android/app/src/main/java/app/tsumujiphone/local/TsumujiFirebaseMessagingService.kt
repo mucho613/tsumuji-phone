@@ -8,6 +8,7 @@ import com.google.firebase.messaging.RemoteMessage
 class TsumujiFirebaseMessagingService : FirebaseMessagingService() {
   override fun onRegistered(installationId: String) {
     PushStateStore(applicationContext).saveFid(installationId)
+    PushGatewayClient(applicationContext).refreshFidAsync(installationId)
   }
 
   override fun onMessageReceived(message: RemoteMessage) {

@@ -259,7 +259,14 @@ class TelephonyService : Service() {
         "TailscaleのIPv4アドレスを検出できません。Tailscaleへ接続してから再試行してください",
       )
 
-    val nativeError = NativeTelephony.nativeStart(server, userId, password, tailscaleAddress)
+    val pushDeviceId = PushStateStore(applicationContext).loadPairing()?.deviceId.orEmpty()
+    val nativeError = NativeTelephony.nativeStart(
+      server,
+      userId,
+      password,
+      tailscaleAddress,
+      pushDeviceId,
+    )
     if (nativeError != null) {
       throw registrationFailure(nativeError, tailscaleAddress)
     }

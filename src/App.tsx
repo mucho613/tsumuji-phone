@@ -2,7 +2,6 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Bell,
-  Clipboard,
   Delete,
   ExternalLink,
   Headphones,
@@ -57,6 +56,10 @@ type PlatformInfo = {
   savedUserId: string | null;
   notificationPermission: "granted" | "notRequested" | "denied" | "unavailable";
   pushFidReady: boolean;
+  pushPaired: boolean;
+  pushGatewayUrl: string | null;
+  pushDeviceId: string | null;
+  pushPairingError: string | null;
   pushSetupError: string | null;
   lastPushResult:
     | "registering"
@@ -84,6 +87,10 @@ const initialPlatformInfo: PlatformInfo = {
   savedUserId: null,
   notificationPermission: "unavailable",
   pushFidReady: false,
+  pushPaired: false,
+  pushGatewayUrl: null,
+  pushDeviceId: null,
+  pushPairingError: null,
   pushSetupError: null,
   lastPushResult: null,
   lastPushReceivedAt: null,
@@ -147,12 +154,15 @@ function App() {
   const [server, setServer] = useState("");
   const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
+  const [pushGatewayUrl, setPushGatewayUrl] = useState("");
+  const [pairingCode, setPairingCode] = useState("");
   const [appliedConnection, setAppliedConnection] =
     useState<AppliedConnection | null>(null);
   const [error, setError] = useState("");
   const [pushMessage, setPushMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const restoredAndroidSettings = useRef(false);
+  const restoredPushSettings = useRef(false);
 
   useEffect(() => {
     const refresh = () => {
@@ -173,6 +183,10 @@ function App() {
             setUserId(restoredConnection.userId);
             setAppliedConnection(restoredConnection);
             restoredAndroidSettings.current = true;
+          }
+          if (info.isAndroid && !restoredPushSettings.current) {
+            setPushGatewayUrl(info.pushGatewayUrl ?? "");
+            restoredPushSettings.current = true;
           }
         })
         .catch(() => undefined);
@@ -268,6 +282,21 @@ function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function pairPushGateway() {
+    await runPushAction(
+      async () => {
+        await invoke("pair_push_gateway", {
+          request: {
+            gatewayUrl: pushGatewayUrl,
+            pairingCode,
+          },
+        });
+        setPairingCode("");
+      },
+      "Push gatewayとペアリングしました",
+    );
   }
 
   return (
@@ -545,6 +574,20 @@ function App() {
                     )}
                   </div>
                   <div>
+                    <span>Push gateway</span>
+                    <strong>
+                      {platformInfo.pushPaired ? "ペアリング済み" : "未設定"}
+                    </strong>
+                    {platformInfo.pushDeviceId && (
+                      <small>端末ID {platformInfo.pushDeviceId}</small>
+                    )}
+                    {platformInfo.pushPairingError && (
+                      <small className="push-error">
+                        {platformInfo.pushPairingError}
+                      </small>
+                    )}
+                  </div>
+                  <div>
                     <span>直近の起動信号</span>
                     <strong>
                       {platformInfo.lastPushResult
@@ -595,23 +638,56 @@ function App() {
                     Androidの通知設定を開く
                   </button>
                 )}
+                <label>
+                  Push gateway URL
+                  <input
+                    type="url"
+                    inputMode="url"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    placeholder="https://server.tailnet.ts.net"
+                    value={pushGatewayUrl}
+                    onChange={(event) =>
+                      setPushGatewayUrl(event.currentTarget.value)
+                    }
+                  />
+                </label>
+                <label>
+                  ペアリングコード
+                  <input
+                    inputMode="text"
+                    autoCapitalize="characters"
+                    autoComplete="one-time-code"
+                    maxLength={11}
+                    placeholder="ABCDE-23456"
+                    value={pairingCode}
+                    onChange={(event) =>
+                      setPairingCode(
+                        event.currentTarget.value
+                          .toUpperCase()
+                          .replace(/[^2-9A-HJ-KM-NP-Z-]/g, "")
+                          .slice(0, 11),
+                      )
+                    }
+                  />
+                </label>
                 <button
                   className="secondary-command"
                   type="button"
-                  disabled={busy || !platformInfo.pushFidReady}
-                  onClick={() =>
-                    void runPushAction(
-                      () => invoke("copy_push_fid"),
-                      "FCMテスト用FIDをコピーしました",
-                    )
+                  disabled={
+                    busy ||
+                    !platformInfo.pushFidReady ||
+                    !pushGatewayUrl ||
+                    pairingCode.length < 10
                   }
+                  onClick={() => void pairPushGateway()}
                 >
-                  <Clipboard size={18} />
-                  FCMテスト用FIDをコピー
+                  Push gatewayとペアリング
                 </button>
                 {pushMessage && <p className="push-message">{pushMessage}</p>}
                 <p className="platform-note">
-                  通知を許可した場合のみ、アプリ終了中の起動信号を処理します。
+                  通知を許可し、Push gatewayとペアリングした場合のみ、アプリ終了中の
+                  起動信号を処理します。
                 </p>
               </section>
             )}

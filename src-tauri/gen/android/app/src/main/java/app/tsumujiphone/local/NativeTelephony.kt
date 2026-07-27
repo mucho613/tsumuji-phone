@@ -12,6 +12,7 @@ internal object NativeTelephony {
     userId: String,
     password: String,
     localAddress: String,
+    pushDeviceId: String,
   ): String?
 
   external fun nativeStop(): String?

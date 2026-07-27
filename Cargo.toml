@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/tsumuji-push-gateway",
     "crates/tsumuji-phone-cli",
     "crates/telephony-core",
     "crates/telephony-pjsip",

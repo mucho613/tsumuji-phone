@@ -1,0 +1,17 @@
+[Unit]
+Description=Tsumuji Phone push gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/tsumuji-push-gateway serve --database %h/.local/share/tsumuji-push-gateway/gateway.sqlite3 --service-account %h/.config/tsumuji-phone/firebase-service-account.json
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/tsumuji-push-gateway
+
+[Install]
+WantedBy=default.target

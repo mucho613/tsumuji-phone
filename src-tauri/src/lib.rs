@@ -59,8 +59,16 @@ struct StartRequest {
     password: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PairPushGatewayRequest {
+    gateway_url: String,
+    pairing_code: String,
+}
+
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools)]
 struct PlatformInfo {
     is_android: bool,
     tailscale_address: Option<String>,
@@ -69,6 +77,10 @@ struct PlatformInfo {
     saved_user_id: Option<String>,
     notification_permission: String,
     push_fid_ready: bool,
+    push_paired: bool,
+    push_gateway_url: Option<String>,
+    push_device_id: Option<String>,
+    push_pairing_error: Option<String>,
     push_setup_error: Option<String>,
     last_push_result: Option<String>,
     last_push_received_at: Option<i64>,
@@ -208,6 +220,10 @@ fn get_platform_info() -> PlatformInfo {
         saved_user_id: None,
         notification_permission: "unavailable".into(),
         push_fid_ready: false,
+        push_paired: false,
+        push_gateway_url: None,
+        push_device_id: None,
+        push_pairing_error: None,
         push_setup_error: None,
         last_push_result: None,
         last_push_received_at: None,
@@ -231,6 +247,10 @@ async fn get_platform_info(
         saved_user_id: status.saved_user_id,
         notification_permission: status.notification_permission,
         push_fid_ready: status.push_fid_ready,
+        push_paired: status.push_paired,
+        push_gateway_url: status.push_gateway_url,
+        push_device_id: status.push_device_id,
+        push_pairing_error: status.push_pairing_error,
         push_setup_error: status.push_setup_error,
         last_push_result: status.last_push_result,
         last_push_received_at: status.last_push_received_at,
@@ -270,16 +290,18 @@ async fn open_push_notification_settings(
 
 #[tauri::command]
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-fn copy_push_fid() -> Result<(), String> {
-    Err("FCMはAndroid版でのみ使用できます".into())
+fn pair_push_gateway(request: PairPushGatewayRequest) -> Result<(), String> {
+    let _ = (request.gateway_url, request.pairing_code);
+    Err("Push gatewayとのペアリングはAndroid版でのみ使用できます".into())
 }
 
 #[tauri::command]
 #[cfg(target_os = "android")]
-async fn copy_push_fid(
+async fn pair_push_gateway(
+    request: PairPushGatewayRequest,
     platform: State<'_, android_platform::AndroidPlatform>,
 ) -> Result<(), String> {
-    platform.copy_push_fid()
+    platform.pair_push_gateway(request.gateway_url, request.pairing_code)
 }
 
 #[tauri::command]
@@ -302,6 +324,7 @@ fn start_waiting(
         rtp_port_end: 40_009,
         user_id: request.user_id,
         password,
+        push_device_id: None,
     };
     config.validate().map_err(backend_error)?;
     if let Some(password) = supplied_password {
@@ -498,7 +521,7 @@ pub fn run() {
             reset_credentials,
             request_push_permission,
             open_push_notification_settings,
-            copy_push_fid
+            pair_push_gateway
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

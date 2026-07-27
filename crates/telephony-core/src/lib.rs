@@ -13,6 +13,8 @@ pub struct AccountConfig {
     pub user_id: String,
     #[serde(skip_serializing)]
     pub password: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_device_id: Option<String>,
 }
 
 impl AccountConfig {
@@ -68,6 +70,16 @@ impl AccountConfig {
         {
             return Err(EngineError::InvalidConfig(
                 "password must contain 1 to 128 printable ASCII characters without spaces".into(),
+            ));
+        }
+        if self.push_device_id.as_ref().is_some_and(|device_id| {
+            device_id.len() != 22
+                || !device_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        }) {
+            return Err(EngineError::InvalidConfig(
+                "push device ID must be a 128-bit Base64URL value".into(),
             ));
         }
         Ok(())
@@ -446,6 +458,7 @@ mod tests {
             rtp_port_end: 40_009,
             user_id: "ts-line3".into(),
             password: "secret".into(),
+            push_device_id: None,
         };
         assert!(config.validate().is_err());
     }
@@ -460,6 +473,7 @@ mod tests {
             rtp_port_end: 40_009,
             user_id: "ts-line3".into(),
             password: "secret".into(),
+            push_device_id: None,
         };
         assert!(config.validate().is_err());
     }
@@ -474,6 +488,7 @@ mod tests {
             rtp_port_end: 40_009,
             user_id: "ts-line3".into(),
             password: "a1b2c3!@".into(),
+            push_device_id: None,
         };
         assert!(config.validate().is_ok());
     }
@@ -488,6 +503,7 @@ mod tests {
             rtp_port_end: 40_009,
             user_id: "phone@3".into(),
             password: "a".into(),
+            push_device_id: None,
         };
         assert!(config.validate().is_err());
 
@@ -512,6 +528,7 @@ mod tests {
             rtp_port_end: 40_009,
             user_id: "ts-line3".into(),
             password: "secret".into(),
+            push_device_id: None,
         };
         assert!(config.validate().is_err());
     }
