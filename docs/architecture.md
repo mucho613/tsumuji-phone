@@ -167,6 +167,13 @@ foreground 実行優先度に加え、応答後はマイク／通話型 foregrou
 同じ通知を維持します。これにより Activity を前面へ出さず、30秒を超える通話でも
 process とバックグラウンド音声を維持します。
 
+Android 14 以上では `NotificationManager.canUseFullScreenIntent()` を設定画面へ
+反映し、未許可時は `ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT` を開きます。許可時は
+`showWhenLocked` と `turnScreenOn` を指定した既存 Activity を着信画面として使い、
+未許可時またはサイレントモード等による視覚抑制時は CallStyle 通知だけで処理します。
+Push 通話から起動した Activity が通話終了後も残る場合は、短時間登録を休止して
+started service 状態を解除した後、bound service として通常の待受登録へ移行します。
+
 ## 配布対象
 
 - 最小 API: 31（Android 12）

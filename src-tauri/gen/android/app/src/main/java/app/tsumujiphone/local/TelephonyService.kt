@@ -76,6 +76,7 @@ class TelephonyService : Service() {
   private lateinit var callsManager: CallsManager
   private var monitorEnabled = false
   private var normalStartupAttempted = false
+  private var uiBound = false
   private var hasRegistered = false
   private var initialDeadlineMillis: Long? = null
   private var recoveryStartedMillis: Long? = null
@@ -114,8 +115,14 @@ class TelephonyService : Service() {
   }
 
   override fun onBind(intent: Intent): IBinder {
+    uiBound = true
     ensureNormalStartup()
     return binder
+  }
+
+  override fun onUnbind(intent: Intent?): Boolean {
+    uiBound = false
+    return super.onUnbind(intent)
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -440,6 +447,13 @@ class TelephonyService : Service() {
       ) {
         showCallNotification(direction, phase, peer)
       }
+      if (phase == "active" && !callForegroundActive) {
+        runCatching {
+          promoteCallToForeground(direction, phase, peer)
+        }.onFailure { error ->
+          Log.e(TAG, "Active call foreground service could not be started", error)
+        }
+      }
       if (phase == "active" && !telecomMarkedActive) {
         markTelecomCallActive()
       }
@@ -664,6 +678,10 @@ class TelephonyService : Service() {
     setStopped()
     removePushForeground()
     stopSelf()
+    if (uiBound) {
+      normalStartupAttempted = false
+      ensureNormalStartup()
+    }
   }
 
   private fun leavePushMode() {

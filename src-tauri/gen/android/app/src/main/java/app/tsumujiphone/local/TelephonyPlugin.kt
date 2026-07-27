@@ -148,6 +148,17 @@ class TelephonyPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   @Command
+  fun openFullScreenIntentSettings(invoke: Invoke) {
+    val mainActivity = activity as? MainActivity
+    if (mainActivity == null) {
+      invoke.reject("全画面着信の設定を開けませんでした")
+      return
+    }
+    mainActivity.openFullScreenIntentSettings()
+    invoke.resolve()
+  }
+
+  @Command
   fun pairPushGateway(invoke: Invoke) {
     val args = invoke.parseArgs(PairPushGatewayArgs::class.java)
     Thread {
@@ -190,6 +201,10 @@ class TelephonyPlugin(private val activity: Activity) : Plugin(activity) {
     put("lastError", lastError)
     val push = PushStateStore(activity.applicationContext).status()
     put("notificationPermission", push.notificationPermission)
+    put(
+      "fullScreenIntentPermission",
+      (activity as? MainActivity)?.canUseFullScreenIntent() == true,
+    )
     put("pushFidReady", push.fidReady)
     put("pushPaired", push.paired)
     put("pushGatewayUrl", push.gatewayUrl)

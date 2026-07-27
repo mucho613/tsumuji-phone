@@ -79,6 +79,10 @@
 - 登録中は無音・低優先度の「着信接続中」通知を表示する。着信時は Core Telecom
   へ通話を登録し、着信音付き CallStyle 通知へ置き換える。通知から応答、拒否、
   通話終了を操作できる
+- Android 14 以上では全画面通知の許可状態と設定導線を表示する。許可済みで画面が
+  ロックされている場合は着信画面をロック画面上へ表示し、未許可時は CallStyle
+  通知へフォールバックする。サイレントモード等が全画面表示を抑制する場合も
+  OS の設定を優先して CallStyle 通知を維持する
 - 通話中は Core Telecom の foreground 実行優先度に加え、マイク／通話型 foreground
   service と同じ CallStyle 通知 ID を維持し、
   30 秒を超えても PJSIP と通話を継続する。通話終了後に PJSIP を deREGISTER

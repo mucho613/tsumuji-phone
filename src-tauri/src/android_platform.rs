@@ -31,6 +31,7 @@ pub struct AndroidStatus {
     pub saved_server: Option<String>,
     pub saved_user_id: Option<String>,
     pub notification_permission: String,
+    pub full_screen_intent_permission: bool,
     pub push_fid_ready: bool,
     pub push_paired: bool,
     pub push_gateway_url: Option<String>,
@@ -139,6 +140,12 @@ impl AndroidPlatform {
     pub fn open_push_notification_settings(&self) -> Result<(), String> {
         self.0
             .run_mobile_plugin::<()>("openPushNotificationSettings", ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn open_full_screen_intent_settings(&self) -> Result<(), String> {
+        self.0
+            .run_mobile_plugin::<()>("openFullScreenIntentSettings", ())
             .map_err(|error| error.to_string())
     }
 

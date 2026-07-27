@@ -76,6 +76,7 @@ struct PlatformInfo {
     saved_server: Option<String>,
     saved_user_id: Option<String>,
     notification_permission: String,
+    full_screen_intent_permission: bool,
     push_fid_ready: bool,
     push_paired: bool,
     push_gateway_url: Option<String>,
@@ -219,6 +220,7 @@ fn get_platform_info() -> PlatformInfo {
         saved_server: None,
         saved_user_id: None,
         notification_permission: "unavailable".into(),
+        full_screen_intent_permission: false,
         push_fid_ready: false,
         push_paired: false,
         push_gateway_url: None,
@@ -246,6 +248,7 @@ async fn get_platform_info(
         saved_server: status.saved_server,
         saved_user_id: status.saved_user_id,
         notification_permission: status.notification_permission,
+        full_screen_intent_permission: status.full_screen_intent_permission,
         push_fid_ready: status.push_fid_ready,
         push_paired: status.push_paired,
         push_gateway_url: status.push_gateway_url,
@@ -286,6 +289,20 @@ async fn open_push_notification_settings(
     platform: State<'_, android_platform::AndroidPlatform>,
 ) -> Result<(), String> {
     platform.open_push_notification_settings()
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn open_full_screen_intent_settings() -> Result<(), String> {
+    Err("全画面着信の設定はAndroid版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn open_full_screen_intent_settings(
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<(), String> {
+    platform.open_full_screen_intent_settings()
 }
 
 #[tauri::command]
@@ -521,6 +538,7 @@ pub fn run() {
             reset_credentials,
             request_push_permission,
             open_push_notification_settings,
+            open_full_screen_intent_settings,
             pair_push_gateway
         ])
         .run(tauri::generate_context!())

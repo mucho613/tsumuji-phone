@@ -1,9 +1,11 @@
 package app.tsumujiphone.local
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.webkit.WebView
@@ -53,6 +55,21 @@ class MainActivity : TauriActivity() {
         .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
         .setData(Uri.parse("package:$packageName")),
     )
+  }
+
+  internal fun canUseFullScreenIntent(): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
+      getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
+
+  internal fun openFullScreenIntentSettings() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+    val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT)
+      .setData(Uri.parse("package:$packageName"))
+    if (intent.resolveActivity(packageManager) != null) {
+      startActivity(intent)
+    } else {
+      openNotificationSettings()
+    }
   }
 
   override fun onRequestPermissionsResult(

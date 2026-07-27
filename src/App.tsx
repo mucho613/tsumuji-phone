@@ -55,6 +55,7 @@ type PlatformInfo = {
   savedServer: string | null;
   savedUserId: string | null;
   notificationPermission: "granted" | "notRequested" | "denied" | "unavailable";
+  fullScreenIntentPermission: boolean;
   pushFidReady: boolean;
   pushPaired: boolean;
   pushGatewayUrl: string | null;
@@ -86,6 +87,7 @@ const initialPlatformInfo: PlatformInfo = {
   savedServer: null,
   savedUserId: null,
   notificationPermission: "unavailable",
+  fullScreenIntentPermission: false,
   pushFidReady: false,
   pushPaired: false,
   pushGatewayUrl: null,
@@ -563,6 +565,14 @@ function App() {
                     </strong>
                   </div>
                   <div>
+                    <span>ロック画面の全画面着信</span>
+                    <strong>
+                      {platformInfo.fullScreenIntentPermission
+                        ? "許可済み"
+                        : "未許可"}
+                    </strong>
+                  </div>
+                  <div>
                     <span>FCM</span>
                     <strong>
                       {platformInfo.pushFidReady ? "準備完了" : "準備中"}
@@ -638,6 +648,21 @@ function App() {
                     Androidの通知設定を開く
                   </button>
                 )}
+                {!platformInfo.fullScreenIntentPermission && (
+                  <button
+                    className="secondary-command"
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void runPushAction(() =>
+                        invoke("open_full_screen_intent_settings"),
+                      )
+                    }
+                  >
+                    <ExternalLink size={18} />
+                    全画面着信を許可
+                  </button>
+                )}
                 <label>
                   Push gateway URL
                   <input
@@ -687,7 +712,9 @@ function App() {
                 {pushMessage && <p className="push-message">{pushMessage}</p>}
                 <p className="platform-note">
                   通知を許可し、Push gatewayとペアリングした場合のみ、アプリ終了中の
-                  起動信号を処理します。
+                  起動信号を処理します。全画面着信を許可すると、ロック画面から
+                  直接応答・拒否できます。サイレントモードやおやすみモードが
+                  全画面表示を抑制している間は、通常の着信通知を表示します。
                 </p>
               </section>
             )}
