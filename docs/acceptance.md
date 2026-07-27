@@ -41,6 +41,10 @@
   通話中は変更適用、待受停止、再接続が無効になる
 - 明示的な待受停止後の次回起動では自動接続せず、保存済み設定は再利用できる
 - Tailscale 未接続やマイク権限なしを登録前に検出し、解決に必要な理由を表示する
+- Android を再起動してロック解除した後、Tsumuji Phone を開かなくても「常時接続
+  VPN」の Tailscale が自動復帰し、tailnet 内の SIP サーバーへ到達できる
+- 同じ SIP ユーザ ID を別の SIP クライアントへ登録せず、OpenSIPS に対象端末の
+  Tsumuji Phone Contact だけが存在する
 - FCM payload に `type=wake` と一時 call token 以外の情報を含めない
 
 ### Android Push 待受
@@ -61,6 +65,8 @@
   Base64URL `callToken` だけを送る
 - アプリのタスクを閉じた状態、`adb shell am kill` 後、画面ロック＋Dozeから wake
   を受信して Activity を開かずに foreground service を開始する
+- 端末再起動後、Tsumuji Phone を一度も開いていない状態から Push 着信、応答、
+  双方向音声、切断が正常に完了する
 - gateway の wake API 要求から15秒以内、FCM受信から10秒以内にAsteriskへSIP登録する
 - 「着信接続中」通知は無音・低優先度で、着信がなければFCM受信から30秒以内に
   SIP登録、foreground service、通知が終了する

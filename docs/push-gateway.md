@@ -89,3 +89,43 @@ curl --fail \
 
 応答が `{"status":"sent"}` なら FCM への送信を受け付けています。FID、端末資格情報、
 call token、サービスアカウント鍵をログやコマンドラインへ出さないでください。
+
+## SIP クライアントの登録競合
+
+一つの SIP ユーザは一台の Tsumuji Phone 専用とし、Linphone など別の SIP
+クライアントと資格情報を共有しません。別クライアントが端末再起動時に自動登録すると、
+OpenSIPS に複数の Contact が残り、着信が別クライアントへ届くことがあります。
+
+登録競合が疑われる場合は、最初に OpenSIPS の location を読み取り専用で確認します。
+
+```bash
+sudo sqlite3 /var/lib/opensips/tsumuji-phone.sqlite \
+  ".headers on" \
+  ".mode column" \
+  "SELECT rowid, username, contact, expires, user_agent
+     FROM location
+    ORDER BY username, contact;"
+```
+
+同じ `username` に Tsumuji Phone 以外の Contact があれば、該当クライアントの登録を
+解除またはアンインストールします。それでも古い行が残る場合だけ、OpenSIPS を停止し、
+データベースをバックアップしてから、確認済みの行だけを削除します。次は
+`LinphoneAndroid` の行を削除する例です。`<sip-user>` は対象ユーザ ID に置き換えます。
+
+```bash
+sudo systemctl stop opensips
+sudo cp --backup=numbered \
+  /var/lib/opensips/tsumuji-phone.sqlite \
+  /var/lib/opensips/tsumuji-phone.sqlite.pre-client-cleanup.bak
+sudo sqlite3 /var/lib/opensips/tsumuji-phone.sqlite \
+  "DELETE FROM location
+    WHERE username = '<sip-user>'
+      AND user_agent LIKE 'LinphoneAndroid/%';
+   SELECT changes();"
+sudo systemctl start opensips
+sudo systemctl is-active opensips
+```
+
+`SELECT changes()` が想定した行数と一致することを確認します。`location` 全体や対象
+ユーザの Tsumuji Phone Contact は削除しません。再度一覧を表示し、対象ユーザに
+Tsumuji Phone の Push 対応 Contact だけが残っていることを確認してから着信を試します。

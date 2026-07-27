@@ -39,6 +39,20 @@ npm run tauri -- android build --debug --apk --target aarch64
 src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
 ```
 
+## Android 実機の事前設定
+
+Tailscale をインストールして、このアプリが使用する tailnet へ接続します。Android の
+「設定」→「ネットワークとインターネット」→「VPN」から Tailscale の設定を開き、
+「常時接続 VPN」を有効にします。これにより、端末を再起動した後も Tsumuji Phone を
+開く前に Tailscale が自動的に再接続します。
+
+「VPN なしの接続をブロック」は必須ではありません。Tailscale の一時的な切断中も
+通常のインターネット接続を維持する場合は無効のままにします。
+
+Tsumuji Phone には端末専用の SIP ユーザ ID を割り当てます。同じ SIP ユーザ ID と
+パスワードを Linphone など別の SIP クライアントへ設定すると、再起動時の自動登録で
+着信先が競合するため共有しません。
+
 ## FCM 起動試験
 
 通常の試験では FID をコピーせず、Push gateway とのペアリング後に gateway の
@@ -68,6 +82,10 @@ adb shell am kill app.tsumujiphone.local
 adb shell dumpsys deviceidle force-idle
 adb shell dumpsys deviceidle unforce
 ```
+
+再起動からの復旧試験では、端末を再起動してロック解除した後、Tailscale と
+Tsumuji Phone を手動で開かずに Tailscale の接続を確認します。その状態で着信させ、
+Push 起動、応答、双方向音声、切断を確認します。
 
 ## 秘密情報の扱い
 

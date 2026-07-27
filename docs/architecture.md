@@ -31,6 +31,8 @@ PJSUA-LIB のコールバックは C アダプターから Rust FFI の同期済
 
 デスクトップと Android は、どちらも tailnet 内の Asterisk UDP 5060 へ直接
 接続します。RTP もクライアントと Asterisk の間で直接送受信します。
+各端末には専用の SIP ユーザ ID を割り当て、同じ AoR を複数の SIP クライアントで
+同時に使用しません。OpenSIPS の複数 Contact による着信先の競合を避けるためです。
 
 ```text
 Desktop / Android
@@ -166,6 +168,10 @@ CallStyle 通知 ID を通話終了まで更新します。着信通知は着信
 foreground 実行優先度に加え、応答後はマイク／通話型 foreground service として
 同じ通知を維持します。これにより Activity を前面へ出さず、30秒を超える通話でも
 process とバックグラウンド音声を維持します。
+
+端末再起動後もアプリを開く前に SIP 経路を利用できるよう、Tailscale は Android の
+「常時接続 VPN」として自動起動させます。VPN 外の通信をブロックする設定は
+アーキテクチャ上の必須条件としません。
 
 Android 14 以上では `NotificationManager.canUseFullScreenIntent()` を設定画面へ
 反映し、未許可時は `ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT` を開きます。許可時は
