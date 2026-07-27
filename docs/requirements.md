@@ -18,11 +18,10 @@
 - クライアントは OpenSIPS の UDP/IPv4 5060 へ接続し、OpenSIPS は localhost の
   Asterisk UDP/IPv4 5061 へ中継
 - SIP サーバーには IPv4 アドレスまたは DNS/MagicDNS ホスト名を指定
-- デスクトップではローカルアドレスに端末へ割り当てられたプライベート LAN
-  または Tailscale の IPv4 アドレスを指定
-- Android では Tailscale の IPv4 アドレスを自動取得し、手入力欄や LAN 接続への
-  フォールバックは提供しない
-- RTP/RTCP は 40000-40009。指定したローカルアドレスへ明示的に bind
+- デスクトップと Android は `100.64.0.0/10` の Tailscale IPv4 アドレスを自動取得し、
+  手入力欄や LAN 接続へのフォールバックを提供しない
+- Tailscale IPv4 が 0 件または複数件の場合は接続を開始せず、理由を表示する
+- RTP/RTCP は 40000-40009。自動取得した Tailscale IPv4 へ明示的に bind
 - PCMU（G.711 μ-law、8 kHz、20 ms）のみ
 - DTMF は RTP telephone-event を優先。未交渉時はインバンドへフォールバック
 - ミュート中も無音 RTP を維持
@@ -36,6 +35,8 @@
 - 通話中のデバイス消失時は通話を終了し、途中切替は行わない
 - SIP パスワードは空白を除く印字可能な ASCII 文字 1～128 文字
 - OS キーチェーンへ SIP パスワードを一件保存。フロントエンドへ保存値を返さない
+- 待受開始後の「変更を適用」は、SIP サーバー、ユーザ ID、または新しいパスワード
+  に適用済み設定との差分がある場合だけ表示
 - テレメトリー、録音、通話履歴、連絡先は持たない
 
 ## Android
@@ -43,27 +44,42 @@
 - Android 12/API 31 以上を対象とし、実機は `arm64-v8a`、エミュレーターは
   `x86_64` のみをビルド
 - 初期配布は署名済み APK の直接配布とし、Google Play での配布は対象外
-- Google Play Services と Firebase Cloud Messaging（FCM）を使用
 - Tailscale は端末側で常時接続し、SIP、pairing、push gateway の通信は tailnet
   内に限定
-- 待受中も SIP 登録を常駐させない。アプリが閉じている場合は FCM の起動信号を
-  受信してから一時的に OpenSIPS へ登録
+- Android Keystore に SIP パスワードを一件だけ保存し、SIP サーバーとユーザ ID
+  も端末内へ保存する。UI や IPC へ保存済みパスワードを返さない
+- 「待受を開始」後は明示的に「待受を停止」するまで待受設定を維持し、アプリの
+  次回起動時に保存済み設定で SIP 登録を一度自動開始
+- 初回登録は明示的な成功または失敗を直ちに反映し、応答がない場合は 10 秒で
+  「接続失敗」とする。同一起動中の初回失敗後は自動再試行しない
+- 「接続失敗」では理由と「再接続」を表示し、手動再接続は保存済み設定を直ちに使う
+- 登録完了後に接続を失った場合だけ、5 秒間隔、最大 60 秒で自動復旧を試す。
+  復旧できなければ手動再接続へ移行し、進行中の通話は切断しない
+- ユーザー向けの待受状態は「待受停止」「接続中」「待受中」「接続失敗」の四つ
+- 接続中も番号入力は許可するが、登録完了前の発信や発信予約は許可しない
+- 設定変更がある場合だけ「変更を適用」を表示して SIP 登録を再開始する。通話中は
+  変更適用、待受停止、再接続を許可しない
+- Android Service が同一プロセス内の Rust/PJSIP を所有し、UI は状態を監視
+- 通話 UI は Core-Telecom の CallStyle 通知を使用し、応答、拒否、切断、
+  ミュート、音声経路切り替えを提供
+- PJSIP の音声 backend は Oboe とし、端末側は 48 kHz、SIP/RTP は PCMU 8 kHz
+- 現段階ではアプリのプロセスが存続している間だけ SIP 登録と着信待受を維持する
+
+### Android Push 対応
+
+- Google Play Services と Firebase Cloud Messaging（FCM）を使用し、アプリを
+  閉じている間は SIP 登録や foreground service を常駐させない
+- FCM の起動信号を受信したときだけ一時的に OpenSIPS へ登録する
 - FCM payload は wake/cancel の種別と推測困難な一時 call token のみに限定し、
   発信者番号、SIP ユーザ ID、SIP 資格情報を含めない
 - OpenSIPS は着信時に最大 30 秒間 Android の再登録を待ち、間に合わなければ
   通常の不応答として終了
 - 呼が取り消された場合は cancel push により着信 UI と登録処理を終了
-- 「待受を開始」は端末を push 対応状態にし、「待受解除」は gateway 上の端末を
-  無効化する。保存済み SIP 資格情報は削除しない
-- Android Keystore に SIP パスワードと端末資格情報を一件だけ保存し、初回
-  pairing は一度限りの pairing code で行う
+- Android Keystore に端末資格情報も一件だけ保存し、初回 pairing は一度限りの
+  pairing code で行う
 - 一つの SIP ユーザ ID に対して有効な Android 端末は一台
-- 端末再起動後は最初のロック解除後から待受を再開
-- Android Service が同一プロセス内の Rust/PJSIP を所有し、UI は状態を監視
-- 通話 UI は Core-Telecom の CallStyle 通知を使用し、応答、拒否、切断、
-  ミュート、音声経路切り替えを提供
-- PJSIP の音声 backend は Oboe とし、端末側は 48 kHz、SIP/RTP は PCMU 8 kHz
-- バッテリー最適化の除外を必須にせず、待受中の常駐 foreground service は使用しない
+- 端末再起動後は最初のロック解除後から push 待受を再開
+- バッテリー最適化の除外を必須としない
 
 ## 初期対象外
 

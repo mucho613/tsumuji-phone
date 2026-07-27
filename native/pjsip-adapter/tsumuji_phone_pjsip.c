@@ -319,6 +319,11 @@ int tp_engine_start(const tp_config *config,
     account_config.cred_info[0].username = tp_pj_str(config->user_id);
     account_config.cred_info[0].data_type = PJSIP_CRED_DATA_PLAIN_PASSWD;
     account_config.cred_info[0].data = tp_pj_str(config->password);
+#if defined(__ANDROID__)
+    account_config.reg_retry_interval = 0;
+    account_config.reg_first_retry_interval = 0;
+    account_config.reg_retry_random_interval = 0;
+#endif
     account_config.rtp_cfg.port = config->rtp_port_start;
     account_config.rtp_cfg.port_range =
         config->rtp_port_end - config->rtp_port_start;
@@ -358,6 +363,22 @@ int tp_engine_stop(tp_engine *engine) {
     active_engine = NULL;
     free(engine);
     return status;
+}
+
+int tp_engine_reregister(tp_engine *engine) {
+    pj_status_t status;
+    if (engine == NULL || engine != active_engine ||
+        engine->account_id == PJSUA_INVALID_ID) {
+        return -1;
+    }
+    status = tp_ensure_thread_registered(engine);
+    if (status != 0) {
+        return status;
+    }
+    status = pjsua_acc_set_registration(engine->account_id, PJ_TRUE);
+    return status == PJ_SUCCESS
+               ? 0
+               : tp_fail(engine, status, "pjsua_acc_set_registration");
 }
 
 int tp_engine_dial(tp_engine *engine, const char *number) {

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Delete,
@@ -50,12 +50,21 @@ type PlatformInfo = {
   isAndroid: boolean;
   tailscaleAddress: string | null;
   credentialStored: boolean;
+  savedServer: string | null;
+  savedUserId: string | null;
+};
+
+type AppliedConnection = {
+  server: string;
+  userId: string;
 };
 
 const initialPlatformInfo: PlatformInfo = {
   isAndroid: false,
   tailscaleAddress: null,
   credentialStored: false,
+  savedServer: null,
+  savedUserId: null,
 };
 
 const keys = [
@@ -75,11 +84,11 @@ const keys = [
 
 const registrationLabels: Record<RegistrationState, string> = {
   stopped: "待受停止",
-  platformReady: "Android設定済み",
-  pushReady: "Push待受中",
-  registering: "登録中",
+  platformReady: "接続中",
+  pushReady: "待受中",
+  registering: "接続中",
   registered: "待受中",
-  retryWaiting: "再接続待ち",
+  retryWaiting: "接続中",
   failed: "接続失敗",
 };
 
@@ -89,11 +98,13 @@ function App() {
   const [platformInfo, setPlatformInfo] = useState(initialPlatformInfo);
   const [number, setNumber] = useState("");
   const [server, setServer] = useState("");
-  const [localAddress, setLocalAddress] = useState("");
   const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
+  const [appliedConnection, setAppliedConnection] =
+    useState<AppliedConnection | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const restoredAndroidSettings = useRef(false);
 
   useEffect(() => {
     const refresh = () => {
@@ -103,7 +114,19 @@ function App() {
     };
     const platformRefresh = () => {
       invoke<PlatformInfo>("get_platform_info")
-        .then(setPlatformInfo)
+        .then((info) => {
+          setPlatformInfo(info);
+          if (info.isAndroid && !restoredAndroidSettings.current) {
+            const restoredConnection = {
+              server: info.savedServer ?? "",
+              userId: info.savedUserId ?? "",
+            };
+            setServer(restoredConnection.server);
+            setUserId(restoredConnection.userId);
+            setAppliedConnection(restoredConnection);
+            restoredAndroidSettings.current = true;
+          }
+        })
         .catch(() => undefined);
     };
     refresh();
@@ -125,6 +148,15 @@ function App() {
     if (phoneState.registration === "failed") return "error";
     return "idle";
   }, [phoneState.registration]);
+
+  const connectionChanged = useMemo(
+    () =>
+      appliedConnection !== null &&
+      (server !== appliedConnection.server ||
+        userId !== appliedConnection.userId ||
+        password.length > 0),
+    [appliedConnection, password, server, userId],
+  );
 
   async function perform(action: () => Promise<PhoneState>) {
     setBusy(true);
@@ -154,18 +186,22 @@ function App() {
       invoke("start_waiting", {
         request: {
           server,
-          localAddress: platformInfo.isAndroid ? null : localAddress,
           userId,
           password: password || null,
         },
       }),
     );
     if (succeeded) {
+      setAppliedConnection({ server, userId });
       setPassword("");
       invoke<PlatformInfo>("get_platform_info")
         .then(setPlatformInfo)
         .catch(() => undefined);
     }
+  }
+
+  async function reconnect() {
+    await perform(() => invoke("reconnect"));
   }
 
   return (
@@ -303,7 +339,20 @@ function App() {
             {(error || phoneState.lastError) && (
               <div className="error-message" role="alert">
                 <ShieldAlert size={17} />
-                <span>{error || phoneState.lastError}</span>
+                <span>
+                  {error || phoneState.lastError}
+                  {platformInfo.isAndroid &&
+                    phoneState.registration === "failed" && (
+                      <button
+                        className="inline-reconnect"
+                        type="button"
+                        disabled={busy || Boolean(phoneState.call)}
+                        onClick={() => void reconnect()}
+                      >
+                        再接続
+                      </button>
+                    )}
+                </span>
               </div>
             )}
           </div>
@@ -319,35 +368,24 @@ function App() {
                   required
                 />
               </label>
-              {platformInfo.isAndroid ? (
-                <div className="platform-summary">
-                  <span>Tailscale IPv4</span>
-                  <strong>
-                    {platformInfo.tailscaleAddress ?? "未接続／検出できません"}
-                  </strong>
-                  <small>
-                    AndroidではTailscaleのアドレスを自動的に使用します
-                  </small>
-                </div>
-              ) : (
-                <label>
-                  この端末のIPアドレス
-                  <input
-                    value={localAddress}
-                    onChange={(event) =>
-                      setLocalAddress(event.currentTarget.value)
-                    }
-                    required
-                  />
-                </label>
-              )}
+              <div className="platform-summary">
+                <span>Tailscale IPv4</span>
+                <strong>
+                  {platformInfo.tailscaleAddress ??
+                    "未接続／一意に検出できません"}
+                </strong>
+                <small>
+                  {platformInfo.isAndroid ? "Android" : "Windows／Ubuntu"}
+                  ではTailscaleのアドレスを自動的に使用します
+                </small>
+              </div>
               <label>
                 ユーザID
                 <input
                   value={userId}
                   minLength={1}
                   maxLength={32}
-                  pattern="[A-Za-z0-9._~-]+"
+                  pattern={"[A-Za-z0-9._~\\-]+"}
                   onChange={(event) =>
                     setUserId(
                       event.currentTarget.value
@@ -382,20 +420,36 @@ function App() {
                 </p>
               )}
               {phoneState.registration === "stopped" ? (
-                <button className="primary-command" type="submit" disabled={busy}>
+                <button
+                  className="primary-command"
+                  type="submit"
+                  disabled={busy || Boolean(phoneState.call)}
+                >
                   <PhoneCall size={18} />
                   待受を開始
                 </button>
               ) : (
-                <button
-                  className="danger-command"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void perform(() => invoke("stop_waiting"))}
-                >
-                  <PhoneOff size={18} />
-                  待受を停止
-                </button>
+                <div className="settings-actions">
+                  {connectionChanged && (
+                    <button
+                      className="primary-command"
+                      type="submit"
+                      disabled={busy || Boolean(phoneState.call)}
+                    >
+                      <PhoneCall size={18} />
+                      変更を適用
+                    </button>
+                  )}
+                  <button
+                    className="danger-command"
+                    type="button"
+                    disabled={busy || Boolean(phoneState.call)}
+                    onClick={() => void perform(() => invoke("stop_waiting"))}
+                  >
+                    <PhoneOff size={18} />
+                    待受を停止
+                  </button>
+                </div>
               )}
             </section>
 

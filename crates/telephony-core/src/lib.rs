@@ -268,7 +268,10 @@ impl StateMachine {
         match event {
             EngineEvent::RegistrationChanged(state) => {
                 self.snapshot.registration = state;
-                if state == RegistrationState::Registered {
+                if matches!(
+                    state,
+                    RegistrationState::Registering | RegistrationState::Registered
+                ) {
                     self.snapshot.last_error = None;
                 }
             }
@@ -365,6 +368,29 @@ mod tests {
             })
             .unwrap_err();
         assert!(matches!(error, EngineError::InvalidState(_)));
+    }
+
+    #[test]
+    fn a_new_registration_attempt_clears_the_previous_error() {
+        let mut state = StateMachine::default();
+        state
+            .apply(EngineEvent::RegistrationChanged(RegistrationState::Failed))
+            .unwrap();
+        state
+            .apply(EngineEvent::Failed("registration failed".into()))
+            .unwrap();
+
+        state
+            .apply(EngineEvent::RegistrationChanged(
+                RegistrationState::Registering,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            state.snapshot().registration,
+            RegistrationState::Registering
+        );
+        assert_eq!(state.snapshot().last_error, None);
     }
 
     #[test]

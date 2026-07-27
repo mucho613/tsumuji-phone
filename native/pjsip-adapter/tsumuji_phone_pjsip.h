@@ -46,6 +46,7 @@ int tp_engine_start(const tp_config *config,
                     void *user_data,
                     tp_engine **out_engine);
 int tp_engine_stop(tp_engine *engine);
+int tp_engine_reregister(tp_engine *engine);
 int tp_engine_dial(tp_engine *engine, const char *number);
 int tp_engine_answer(tp_engine *engine);
 int tp_engine_reject(tp_engine *engine);

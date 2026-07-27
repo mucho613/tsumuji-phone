@@ -4,6 +4,11 @@
 mod android_platform;
 
 use std::sync::{Arc, Mutex};
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use std::{
+    collections::BTreeSet,
+    net::{IpAddr, Ipv4Addr},
+};
 use tauri::State;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use tauri::{
@@ -40,8 +45,6 @@ impl Default for Controller {
 #[serde(rename_all = "camelCase")]
 struct StartRequest {
     server: String,
-    #[serde(default)]
-    local_address: Option<String>,
     user_id: String,
     password: Option<String>,
 }
@@ -52,6 +55,8 @@ struct PlatformInfo {
     is_android: bool,
     tailscale_address: Option<String>,
     credential_stored: bool,
+    saved_server: Option<String>,
+    saved_user_id: Option<String>,
 }
 
 fn backend_error(error: impl std::fmt::Display) -> String {
@@ -70,6 +75,45 @@ fn merge_android_phone_snapshot(
 
 fn is_blocked_number(number: &str) -> bool {
     BLOCKED_NUMBERS.contains(&number)
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+fn is_tailscale_ipv4(address: Ipv4Addr) -> bool {
+    let octets = address.octets();
+    octets[0] == 100 && (64..=127).contains(&octets[1])
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+fn select_tailscale_ipv4(
+    addresses: impl IntoIterator<Item = Ipv4Addr>,
+) -> Result<Ipv4Addr, String> {
+    let addresses = addresses
+        .into_iter()
+        .filter(|address| is_tailscale_ipv4(*address))
+        .collect::<BTreeSet<_>>();
+    match addresses.len() {
+        0 => Err(
+            "TailscaleのIPv4アドレスを検出できません。Tailscaleへ接続してから再試行してください"
+                .into(),
+        ),
+        1 => Ok(*addresses.first().expect("one Tailscale address")),
+        _ => Err(
+            "Tailscale IPv4アドレスを一意に特定できません。Tailscaleの接続状態を確認してください"
+                .into(),
+        ),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn detect_tailscale_ipv4() -> Result<Ipv4Addr, String> {
+    let addresses = if_addrs::get_if_addrs()
+        .map_err(|error| format!("Tailscale IPv4アドレスの検出に失敗しました: {error}"))?
+        .into_iter()
+        .filter_map(|interface| match interface.ip() {
+            IpAddr::V4(address) => Some(address),
+            IpAddr::V6(_) => None,
+        });
+    select_tailscale_ipv4(addresses)
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -138,8 +182,12 @@ async fn get_phone_state(
 fn get_platform_info() -> PlatformInfo {
     PlatformInfo {
         is_android: false,
-        tailscale_address: None,
+        tailscale_address: detect_tailscale_ipv4()
+            .ok()
+            .map(|address| address.to_string()),
         credential_stored: false,
+        saved_server: None,
+        saved_user_id: None,
     }
 }
 
@@ -153,6 +201,8 @@ async fn get_platform_info(
         is_android: true,
         tailscale_address: status.tailscale_address,
         credential_stored: status.credential_stored,
+        saved_server: status.saved_server,
+        saved_user_id: status.saved_user_id,
     })
 }
 
@@ -170,9 +220,7 @@ fn start_waiting(
     };
     let config = AccountConfig {
         server: request.server,
-        local_address: request
-            .local_address
-            .ok_or_else(|| "この端末のIPアドレスを入力してください".to_string())?,
+        local_address: detect_tailscale_ipv4()?.to_string(),
         sip_port: 5060,
         rtp_port_start: 40_000,
         rtp_port_end: 40_009,
@@ -197,11 +245,9 @@ async fn start_waiting(
 ) -> Result<PhoneSnapshot, String> {
     let StartRequest {
         server,
-        local_address,
         user_id,
         password,
     } = request;
-    let _ = local_address;
     platform
         .start_waiting(server, user_id, password)
         .map(android_platform::AndroidStatus::phone_snapshot)
@@ -222,6 +268,22 @@ async fn stop_waiting(
 ) -> Result<PhoneSnapshot, String> {
     platform
         .stop_waiting()
+        .map(android_platform::AndroidStatus::phone_snapshot)
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn reconnect() -> Result<PhoneSnapshot, String> {
+    Err("再接続はAndroid版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn reconnect(
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<PhoneSnapshot, String> {
+    platform
+        .reconnect()
         .map(android_platform::AndroidStatus::phone_snapshot)
 }
 
@@ -352,6 +414,7 @@ pub fn run() {
             get_platform_info,
             start_waiting,
             stop_waiting,
+            reconnect,
             dial,
             answer,
             reject,
@@ -366,7 +429,8 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_blocked_number, merge_android_phone_snapshot};
+    use super::{is_blocked_number, merge_android_phone_snapshot, select_tailscale_ipv4};
+    use std::net::Ipv4Addr;
     use telephony_core::{
         CallDirection, CallPhase, CallSnapshot, PhoneSnapshot, RegistrationState,
     };
@@ -382,6 +446,35 @@ mod tests {
     fn does_not_block_numbers_that_only_contain_an_emergency_sequence() {
         assert!(!is_blocked_number("0110"));
         assert!(!is_blocked_number("1190"));
+    }
+
+    #[test]
+    fn selects_the_only_tailscale_ipv4_address() {
+        let selected = select_tailscale_ipv4([
+            Ipv4Addr::new(192, 168, 1, 2),
+            Ipv4Addr::new(100, 100, 1, 5),
+            Ipv4Addr::new(100, 100, 1, 5),
+        ])
+        .unwrap();
+
+        assert_eq!(selected, Ipv4Addr::new(100, 100, 1, 5));
+    }
+
+    #[test]
+    fn rejects_missing_or_ambiguous_tailscale_ipv4_addresses() {
+        assert!(select_tailscale_ipv4([Ipv4Addr::new(192, 168, 1, 2)]).is_err());
+        assert!(select_tailscale_ipv4([
+            Ipv4Addr::new(100, 64, 0, 1),
+            Ipv4Addr::new(100, 127, 255, 254),
+        ])
+        .is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    #[ignore = "requires exactly one connected Tailscale IPv4 address"]
+    fn detects_the_connected_desktop_tailscale_address() {
+        super::detect_tailscale_ipv4().unwrap();
     }
 
     #[test]

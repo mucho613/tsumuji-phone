@@ -25,6 +25,26 @@ pub struct PjsipEngine {
     native: native::NativeEngine,
 }
 
+impl PjsipEngine {
+    /// Retry registration for an already-started native account.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when native PJSIP is unavailable or not running.
+    pub fn reregister(&mut self) -> Result<(), EngineError> {
+        #[cfg(feature = "native-pjsip")]
+        {
+            self.native.reregister()
+        }
+        #[cfg(not(feature = "native-pjsip"))]
+        {
+            Err(EngineError::BackendUnavailable(
+                "native PJSIP support is disabled".into(),
+            ))
+        }
+    }
+}
+
 #[allow(clippy::needless_return)]
 impl TelephonyEngine for PjsipEngine {
     fn start(&mut self, config: &AccountConfig) -> Result<(), EngineError> {

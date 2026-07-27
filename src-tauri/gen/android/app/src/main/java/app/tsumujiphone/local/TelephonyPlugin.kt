@@ -93,6 +93,24 @@ class TelephonyPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   @Command
+  fun reconnect(invoke: Invoke) {
+    val mainActivity = activity as? MainActivity
+    if (mainActivity == null) {
+      invoke.reject("マイク権限を確認できませんでした")
+      return
+    }
+    mainActivity.requestAudioPermission { granted ->
+      if (!granted) {
+        invoke.reject("通話にはマイクの権限が必要です")
+        return@requestAudioPermission
+      }
+      withService(invoke) { connectedService ->
+        invoke.resolve(connectedService.reconnect().toJson())
+      }
+    }
+  }
+
+  @Command
   fun resetCredentials(invoke: Invoke) {
     withService(invoke) { connectedService ->
       connectedService.resetCredentials()
@@ -121,6 +139,8 @@ class TelephonyPlugin(private val activity: Activity) : Plugin(activity) {
     put("state", state.wireName)
     put("tailscaleAddress", tailscaleAddress)
     put("credentialStored", credentialStored)
+    put("savedServer", savedServer)
+    put("savedUserId", savedUserId)
     put("lastError", lastError)
   }
 }

@@ -1,6 +1,6 @@
 use jni::{
     objects::{JObject, JString},
-    sys::jstring,
+    sys::{jboolean, jstring},
     JNIEnv,
 };
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,8 @@ pub struct AndroidStatus {
     state: AndroidWaitingState,
     pub tailscale_address: Option<String>,
     pub credential_stored: bool,
+    pub saved_server: Option<String>,
+    pub saved_user_id: Option<String>,
     last_error: Option<String>,
 }
 
@@ -92,6 +94,12 @@ impl AndroidPlatform {
     pub fn stop_waiting(&self) -> Result<AndroidStatus, String> {
         self.0
             .run_mobile_plugin("stopWaiting", ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn reconnect(&self) -> Result<AndroidStatus, String> {
+        self.0
+            .run_mobile_plugin("reconnect", ())
             .map_err(|error| error.to_string())
     }
 
@@ -165,6 +173,23 @@ pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeStop(
 ) -> jstring {
     let result = with_engine(|engine| engine.stop().map_err(|error| error.to_string()));
     optional_java_string(env, result.err())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeReregister(
+    env: JNIEnv<'_>,
+    _instance: JObject<'_>,
+) -> jstring {
+    let result = with_engine(|engine| engine.reregister().map_err(|error| error.to_string()));
+    optional_java_string(env, result.err())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_app_tsumujiphone_local_NativeTelephony_nativeHasActiveCall(
+    _env: JNIEnv<'_>,
+    _instance: JObject<'_>,
+) -> jboolean {
+    u8::from(with_engine(|engine| Ok(engine.snapshot().call.is_some())).unwrap_or(false))
 }
 
 #[no_mangle]

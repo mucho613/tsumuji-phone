@@ -32,6 +32,7 @@ jni = "0.21"
 telephony-pjsip = { path = "../crates/telephony-pjsip", features = ["native-pjsip"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+if-addrs = "0.14"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 

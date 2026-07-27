@@ -41,6 +41,7 @@ unsafe extern "C" {
         out_engine: *mut *mut TpEngine,
     ) -> c_int;
     fn tp_engine_stop(engine: *mut TpEngine) -> c_int;
+    fn tp_engine_reregister(engine: *mut TpEngine) -> c_int;
     fn tp_engine_dial(engine: *mut TpEngine, number: *const c_char) -> c_int;
     fn tp_engine_answer(engine: *mut TpEngine) -> c_int;
     fn tp_engine_reject(engine: *mut TpEngine) -> c_int;
@@ -128,7 +129,27 @@ impl NativeEngine {
             return Ok(());
         };
         let status = unsafe { tp_engine_stop(handle.as_ptr()) };
-        status_result(status, handle.as_ptr())
+        let result = if status == 0 {
+            Ok(())
+        } else {
+            Err(EngineError::Backend(format!(
+                "PJSIP shutdown failed with status {status}"
+            )))
+        };
+        if result.is_ok() {
+            self.apply(EngineEvent::RegistrationChanged(RegistrationState::Stopped));
+        }
+        result
+    }
+
+    pub fn reregister(&mut self) -> Result<(), EngineError> {
+        let result = self.call(|handle| unsafe { tp_engine_reregister(handle) });
+        if result.is_ok() {
+            self.apply(EngineEvent::RegistrationChanged(
+                RegistrationState::Registering,
+            ));
+        }
+        result
     }
 
     pub fn dial(&mut self, number: &str) -> Result<(), EngineError> {
@@ -215,11 +236,12 @@ unsafe extern "C" fn on_event(user_data: *mut c_void, event: *const TpEvent) {
     let event = unsafe { &*event };
     let peer = c_string_lossy(event.peer);
     let message = c_string_lossy(event.message);
+    let registration_failure = (event.kind == 3).then(|| format!("registration failed: {message}"));
     let call_id = u32::try_from(event.call_id).unwrap_or_default();
     let mapped = match event.kind {
         1 => EngineEvent::RegistrationChanged(RegistrationState::Registering),
         2 => EngineEvent::RegistrationChanged(RegistrationState::Registered),
-        3 => EngineEvent::Failed(format!("registration failed: {message}")),
+        3 => EngineEvent::RegistrationChanged(RegistrationState::Failed),
         4 => EngineEvent::IncomingCall { id: call_id, peer },
         5 => EngineEvent::OutgoingCall { id: call_id, peer },
         6 => EngineEvent::CallConnecting { id: call_id },
@@ -236,6 +258,8 @@ unsafe extern "C" fn on_event(user_data: *mut c_void, event: *const TpEvent) {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Err(error) = state.apply(mapped) {
         let _ = state.apply(EngineEvent::Failed(error.to_string()));
+    } else if let Some(error) = registration_failure {
+        let _ = state.apply(EngineEvent::Failed(error));
     }
 }
 
