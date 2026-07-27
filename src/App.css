@@ -36,7 +36,10 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-rows: 58px minmax(0, 1fr) 64px;
+  grid-template-rows:
+    calc(58px + env(safe-area-inset-top, 0px))
+    minmax(0, 1fr)
+    calc(64px + env(safe-area-inset-bottom, 0px));
   width: 100%;
   height: 100%;
   background: #f8faf9;
@@ -47,7 +50,7 @@ button {
   grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
-  padding: 0 16px;
+  padding: env(safe-area-inset-top, 0px) 16px 0;
   color: #f8fffc;
   background: #193f3b;
   border-bottom: 1px solid #0f302d;
@@ -313,6 +316,37 @@ h1 {
   box-shadow: 0 0 0 2px rgb(39 119 93 / 16%);
 }
 
+.platform-summary {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 10px;
+  color: #536660;
+  background: #edf4f1;
+  border: 1px solid #c9d7d2;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.platform-summary strong {
+  color: #203b35;
+  font-size: 14px;
+}
+
+.platform-summary small,
+.platform-note,
+.stored-credential {
+  margin: 0;
+  color: #60736d;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.stored-credential {
+  margin: -4px 0 12px;
+  color: #27775d;
+}
+
 .label-with-icon {
   display: flex;
   align-items: center;
@@ -347,6 +381,7 @@ h1 {
 .bottom-nav {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   background: #ffffff;
   border-top: 1px solid #d2dcda;
 }
@@ -403,6 +438,21 @@ h1 {
 
   .settings h2 {
     color: #b9d7cc;
+  }
+
+  .platform-summary {
+    color: #a8b8b3;
+    background: #202b28;
+    border-color: #465651;
+  }
+
+  .platform-summary strong {
+    color: #e8efec;
+  }
+
+  .platform-summary small,
+  .platform-note {
+    color: #a8b8b3;
   }
 
   .settings label,

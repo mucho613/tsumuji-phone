@@ -5,6 +5,9 @@ use telephony_core::{AccountConfig, EngineError, PhoneSnapshot, TelephonyEngine}
 #[cfg(feature = "native-pjsip")]
 mod native;
 
+#[cfg(all(feature = "native-pjsip", target_os = "android"))]
+pub use native::set_android_java_vm;
+
 #[must_use]
 pub const fn backend_description() -> &'static str {
     if cfg!(feature = "native-pjsip") {

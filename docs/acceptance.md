@@ -17,4 +17,29 @@
 - ネットワーク切断、スリープ復帰、Tailscale 再接続、Asterisk 再起動後に回復
 - 保存済み資格情報や完全な電話番号がログへ出ない
 
+## Android
+
+- Android 12/API 31 以上の `arm64-v8a` 実機と `x86_64` エミュレーターへ APK を
+  インストールして起動できる
+- Tailscale 未接続、Google Play Services 利用不可、通知権限なしなどの前提条件を
+  待受開始前に検出し、解決方法を表示する
+- 一度限りの pairing code で端末を登録し、同じ code を再利用できない
+- SIP パスワードと device credential が Android Keystore で保護され、
+  UI、ログ、FCM payload に露出しない
+- FCM payload に wake/cancel と一時 call token 以外の着信情報を含めない
+- アプリを閉じた状態と画面ロック状態から wake push を受信し、30 秒以内に
+  OpenSIPS へ登録して着信 UI を表示する
+- INVITE 受信後に内線の発信者番号を表示し、外線で番号が通知されない場合も
+  着信へ応答できる
+- 発信側が呼を取り消したとき、cancel push により着信 UI と一時登録が終了する
+- 応答、拒否、切断、ミュート、受話口／スピーカー／Bluetooth 切り替えが
+  Core-Telecom と実際の音声経路へ反映される
+- 端末側 48 kHz と PCMU/RTP 8 kHz の間で、内線／外線とも双方向音声が安定する
+- 端末再起動後、最初のロック解除を経て push 待受可能状態へ復帰する
+- 明示的な待受解除後は push 着信しないが、再開時に保存済み資格情報を再利用できる
+- バッテリー最適化の除外なしで、SIP や foreground service を常駐させずに
+  一晩の待受と翌日の着信が成立する
+- 一つの SIP ユーザ ID に二台目を pairing した場合、同時に有効な Android 端末が
+  一台だけになる
+
 実機試験中も既存電話機を利用可能な状態に保ちます。

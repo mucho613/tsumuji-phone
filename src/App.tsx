@@ -16,6 +16,8 @@ import "./App.css";
 
 type RegistrationState =
   | "stopped"
+  | "platformReady"
+  | "pushReady"
   | "registering"
   | "registered"
   | "retryWaiting"
@@ -44,6 +46,18 @@ const initialPhoneState: PhoneState = {
   lastCallReason: null,
 };
 
+type PlatformInfo = {
+  isAndroid: boolean;
+  tailscaleAddress: string | null;
+  credentialStored: boolean;
+};
+
+const initialPlatformInfo: PlatformInfo = {
+  isAndroid: false,
+  tailscaleAddress: null,
+  credentialStored: false,
+};
+
 const keys = [
   ["1", ""],
   ["2", "ABC"],
@@ -61,6 +75,8 @@ const keys = [
 
 const registrationLabels: Record<RegistrationState, string> = {
   stopped: "待受停止",
+  platformReady: "Android設定済み",
+  pushReady: "Push待受中",
   registering: "登録中",
   registered: "待受中",
   retryWaiting: "再接続待ち",
@@ -70,6 +86,7 @@ const registrationLabels: Record<RegistrationState, string> = {
 function App() {
   const [tab, setTab] = useState<"phone" | "settings">("phone");
   const [phoneState, setPhoneState] = useState(initialPhoneState);
+  const [platformInfo, setPlatformInfo] = useState(initialPlatformInfo);
   const [number, setNumber] = useState("");
   const [server, setServer] = useState("");
   const [localAddress, setLocalAddress] = useState("");
@@ -84,13 +101,27 @@ function App() {
         .then(setPhoneState)
         .catch(() => undefined);
     };
+    const platformRefresh = () => {
+      invoke<PlatformInfo>("get_platform_info")
+        .then(setPlatformInfo)
+        .catch(() => undefined);
+    };
     refresh();
+    platformRefresh();
     const timer = window.setInterval(refresh, 500);
-    return () => window.clearInterval(timer);
+    const platformTimer = window.setInterval(platformRefresh, 2000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearInterval(platformTimer);
+    };
   }, []);
 
   const statusTone = useMemo(() => {
-    if (phoneState.registration === "registered") return "ok";
+    if (
+      phoneState.registration === "registered" ||
+      phoneState.registration === "pushReady"
+    )
+      return "ok";
     if (phoneState.registration === "failed") return "error";
     return "idle";
   }, [phoneState.registration]);
@@ -100,8 +131,10 @@ function App() {
     setError("");
     try {
       setPhoneState(await action());
+      return true;
     } catch (reason) {
       setError(String(reason));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -115,18 +148,24 @@ function App() {
     if (number.length < 32) setNumber((current) => `${current}${digit}`);
   }
 
-  function startWaiting(event: FormEvent) {
+  async function startWaiting(event: FormEvent) {
     event.preventDefault();
-    void perform(() =>
+    const succeeded = await perform(() =>
       invoke("start_waiting", {
         request: {
           server,
-          localAddress,
+          localAddress: platformInfo.isAndroid ? null : localAddress,
           userId,
           password: password || null,
         },
       }),
-    ).then(() => setPassword(""));
+    );
+    if (succeeded) {
+      setPassword("");
+      invoke<PlatformInfo>("get_platform_info")
+        .then(setPlatformInfo)
+        .catch(() => undefined);
+    }
   }
 
   return (
@@ -280,14 +319,28 @@ function App() {
                   required
                 />
               </label>
-              <label>
-                この端末のIPアドレス
-                <input
-                  value={localAddress}
-                  onChange={(event) => setLocalAddress(event.currentTarget.value)}
-                  required
-                />
-              </label>
+              {platformInfo.isAndroid ? (
+                <div className="platform-summary">
+                  <span>Tailscale IPv4</span>
+                  <strong>
+                    {platformInfo.tailscaleAddress ?? "未接続／検出できません"}
+                  </strong>
+                  <small>
+                    AndroidではTailscaleのアドレスを自動的に使用します
+                  </small>
+                </div>
+              ) : (
+                <label>
+                  この端末のIPアドレス
+                  <input
+                    value={localAddress}
+                    onChange={(event) =>
+                      setLocalAddress(event.currentTarget.value)
+                    }
+                    required
+                  />
+                </label>
+              )}
               <label>
                 ユーザID
                 <input
@@ -323,6 +376,11 @@ function App() {
                   placeholder="保存済みの場合は空欄"
                 />
               </label>
+              {platformInfo.isAndroid && platformInfo.credentialStored && (
+                <p className="stored-credential">
+                  パスワードはAndroid Keystoreで保護されています
+                </p>
+              )}
               {phoneState.registration === "stopped" ? (
                 <button className="primary-command" type="submit" disabled={busy}>
                   <PhoneCall size={18} />
@@ -343,30 +401,38 @@ function App() {
 
             <section>
               <h2>音声デバイス</h2>
-              <label>
-                <span className="label-with-icon">
-                  <Mic size={16} /> マイク
-                </span>
-                <select defaultValue="default">
-                  <option value="default">システム既定</option>
-                </select>
-              </label>
-              <label>
-                <span className="label-with-icon">
-                  <Headphones size={16} /> 通話音声
-                </span>
-                <select defaultValue="default">
-                  <option value="default">システム既定</option>
-                </select>
-              </label>
-              <label>
-                <span className="label-with-icon">
-                  <Volume2 size={16} /> 着信音
-                </span>
-                <select defaultValue="default">
-                  <option value="default">システム既定</option>
-                </select>
-              </label>
+              {platformInfo.isAndroid ? (
+                <p className="platform-note">
+                  通話時にAndroidの受話口、スピーカー、Bluetoothから選択します。
+                </p>
+              ) : (
+                <>
+                  <label>
+                    <span className="label-with-icon">
+                      <Mic size={16} /> マイク
+                    </span>
+                    <select defaultValue="default">
+                      <option value="default">システム既定</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span className="label-with-icon">
+                      <Headphones size={16} /> 通話音声
+                    </span>
+                    <select defaultValue="default">
+                      <option value="default">システム既定</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span className="label-with-icon">
+                      <Volume2 size={16} /> 着信音
+                    </span>
+                    <select defaultValue="default">
+                      <option value="default">システム既定</option>
+                    </select>
+                  </label>
+                </>
+              )}
             </section>
 
             {(error || phoneState.lastError) && (

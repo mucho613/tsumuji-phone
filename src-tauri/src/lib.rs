@@ -1,27 +1,37 @@
 #![allow(clippy::needless_pass_by_value)]
 
-use std::sync::Mutex;
+#[cfg(target_os = "android")]
+mod android_platform;
+
+use std::sync::{Arc, Mutex};
+use tauri::State;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, State,
+    AppHandle, Manager,
 };
-use telephony_core::{AccountConfig, PhoneSnapshot, TelephonyEngine};
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use telephony_core::AccountConfig;
+use telephony_core::{PhoneSnapshot, TelephonyEngine};
 use telephony_pjsip::PjsipEngine;
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const KEYRING_SERVICE: &str = "app.tsumuji-phone.local";
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const LEGACY_KEYRING_SERVICE: &str = "app.hikari-phone.local";
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const KEYRING_ACCOUNT: &str = "sip-account";
 const BLOCKED_NUMBERS: [&str; 3] = ["110", "118", "119"];
 
 struct Controller {
-    engine: Mutex<PjsipEngine>,
+    engine: Arc<Mutex<PjsipEngine>>,
 }
 
 impl Default for Controller {
     fn default() -> Self {
         Self {
-            engine: Mutex::new(PjsipEngine::default()),
+            engine: Arc::new(Mutex::new(PjsipEngine::default())),
         }
     }
 }
@@ -30,23 +40,44 @@ impl Default for Controller {
 #[serde(rename_all = "camelCase")]
 struct StartRequest {
     server: String,
-    local_address: String,
+    #[serde(default)]
+    local_address: Option<String>,
     user_id: String,
     password: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformInfo {
+    is_android: bool,
+    tailscale_address: Option<String>,
+    credential_stored: bool,
 }
 
 fn backend_error(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
+#[cfg(any(target_os = "android", test))]
+fn merge_android_phone_snapshot(
+    mut engine_snapshot: PhoneSnapshot,
+    platform_snapshot: PhoneSnapshot,
+) -> PhoneSnapshot {
+    engine_snapshot.registration = platform_snapshot.registration;
+    engine_snapshot.last_error = platform_snapshot.last_error.or(engine_snapshot.last_error);
+    engine_snapshot
+}
+
 fn is_blocked_number(number: &str) -> bool {
     BLOCKED_NUMBERS.contains(&number)
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn keyring_entry(service: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(service, KEYRING_ACCOUNT).map_err(backend_error)
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn delete_credential_if_present(entry: &keyring::Entry) -> Result<(), String> {
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -54,10 +85,12 @@ fn delete_credential_if_present(entry: &keyring::Entry) -> Result<(), String> {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn delete_legacy_credential() -> Result<(), String> {
     delete_credential_if_present(&keyring_entry(LEGACY_KEYRING_SERVICE)?)
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn load_or_migrate_password(credential: &keyring::Entry) -> Result<String, String> {
     match credential.get_password() {
         Ok(password) => {
@@ -80,12 +113,51 @@ fn load_or_migrate_password(credential: &keyring::Entry) -> Result<String, Strin
 }
 
 #[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn get_phone_state(controller: State<'_, Controller>) -> Result<PhoneSnapshot, String> {
     let engine = controller.engine.lock().map_err(backend_error)?;
     Ok(engine.snapshot())
 }
 
 #[tauri::command]
+#[cfg(target_os = "android")]
+async fn get_phone_state(
+    platform: State<'_, android_platform::AndroidPlatform>,
+    controller: State<'_, Controller>,
+) -> Result<PhoneSnapshot, String> {
+    let platform_snapshot = platform.status()?.phone_snapshot();
+    let engine = controller.engine.lock().map_err(backend_error)?;
+    Ok(merge_android_phone_snapshot(
+        engine.snapshot(),
+        platform_snapshot,
+    ))
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn get_platform_info() -> PlatformInfo {
+    PlatformInfo {
+        is_android: false,
+        tailscale_address: None,
+        credential_stored: false,
+    }
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn get_platform_info(
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<PlatformInfo, String> {
+    let status = platform.status()?;
+    Ok(PlatformInfo {
+        is_android: true,
+        tailscale_address: status.tailscale_address,
+        credential_stored: status.credential_stored,
+    })
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn start_waiting(
     request: StartRequest,
     controller: State<'_, Controller>,
@@ -98,7 +170,9 @@ fn start_waiting(
     };
     let config = AccountConfig {
         server: request.server,
-        local_address: request.local_address,
+        local_address: request
+            .local_address
+            .ok_or_else(|| "この端末のIPアドレスを入力してください".to_string())?,
         sip_port: 5060,
         rtp_port_start: 40_000,
         rtp_port_end: 40_009,
@@ -116,10 +190,39 @@ fn start_waiting(
 }
 
 #[tauri::command]
+#[cfg(target_os = "android")]
+async fn start_waiting(
+    request: StartRequest,
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<PhoneSnapshot, String> {
+    let StartRequest {
+        server,
+        local_address,
+        user_id,
+        password,
+    } = request;
+    let _ = local_address;
+    platform
+        .start_waiting(server, user_id, password)
+        .map(android_platform::AndroidStatus::phone_snapshot)
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn stop_waiting(controller: State<'_, Controller>) -> Result<PhoneSnapshot, String> {
     let mut engine = controller.engine.lock().map_err(backend_error)?;
     engine.stop().map_err(backend_error)?;
     Ok(engine.snapshot())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn stop_waiting(
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<PhoneSnapshot, String> {
+    platform
+        .stop_waiting()
+        .map(android_platform::AndroidStatus::phone_snapshot)
 }
 
 #[tauri::command]
@@ -167,11 +270,21 @@ fn set_muted(muted: bool, controller: State<'_, Controller>) -> Result<PhoneSnap
 }
 
 #[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn reset_credentials() -> Result<(), String> {
     delete_credential_if_present(&keyring_entry(KEYRING_SERVICE)?)?;
     delete_legacy_credential()
 }
 
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn reset_credentials(
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<(), String> {
+    platform.reset_credentials()
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -186,8 +299,14 @@ fn show_main_window(app: &AppHandle) {
 ///
 /// Panics if Tauri cannot create the application runtime or system tray.
 pub fn run() {
-    tauri::Builder::default()
-        .manage(Controller::default())
+    let controller = Controller::default();
+    #[cfg(target_os = "android")]
+    android_platform::install_engine(Arc::clone(&controller.engine));
+    let builder = tauri::Builder::default().manage(controller);
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_platform::init());
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             show_main_window(app);
         }))
@@ -226,9 +345,11 @@ pub fn run() {
                 api.prevent_close();
                 let _ = window.hide();
             }
-        })
+        });
+    builder
         .invoke_handler(tauri::generate_handler![
             get_phone_state,
+            get_platform_info,
             start_waiting,
             stop_waiting,
             dial,
@@ -245,7 +366,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::is_blocked_number;
+    use super::{is_blocked_number, merge_android_phone_snapshot};
+    use telephony_core::{
+        CallDirection, CallPhase, CallSnapshot, PhoneSnapshot, RegistrationState,
+    };
 
     #[test]
     fn blocks_japanese_emergency_and_coast_guard_numbers() {
@@ -258,5 +382,31 @@ mod tests {
     fn does_not_block_numbers_that_only_contain_an_emergency_sequence() {
         assert!(!is_blocked_number("0110"));
         assert!(!is_blocked_number("1190"));
+    }
+
+    #[test]
+    fn android_status_refresh_preserves_active_call() {
+        let call = CallSnapshot {
+            id: 7,
+            peer: "sip:117@asterisk".into(),
+            direction: CallDirection::Outgoing,
+            phase: CallPhase::Active,
+        };
+        let engine_snapshot = PhoneSnapshot {
+            registration: RegistrationState::Registered,
+            call: Some(call.clone()),
+            muted: true,
+            last_error: None,
+            last_call_reason: None,
+        };
+        let platform_snapshot = PhoneSnapshot {
+            registration: RegistrationState::Registered,
+            ..PhoneSnapshot::default()
+        };
+
+        let merged = merge_android_phone_snapshot(engine_snapshot, platform_snapshot);
+
+        assert_eq!(merged.call, Some(call));
+        assert!(merged.muted);
     }
 }

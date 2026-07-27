@@ -22,11 +22,18 @@ default = []
 native-pjsip = ["telephony-pjsip/native-pjsip"]
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-single-instance = "2"
+tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 telephony-core = { path = "../crates/telephony-core" }
 telephony-pjsip = { path = "../crates/telephony-pjsip" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+telephony-pjsip = { path = "../crates/telephony-pjsip", features = ["native-pjsip"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service"] }
@@ -34,5 +41,9 @@ keyring = { version = "3", features = ["sync-secret-service"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

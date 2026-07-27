@@ -18,6 +18,21 @@ struct tp_engine {
 
 static tp_engine *active_engine;
 
+#if defined(_MSC_VER)
+#define TP_THREAD_LOCAL __declspec(thread)
+#else
+#define TP_THREAD_LOCAL __thread
+#endif
+
+static TP_THREAD_LOCAL pj_thread_desc external_thread_desc;
+static TP_THREAD_LOCAL pj_thread_t *external_thread;
+
+#if defined(PJ_ANDROID) && PJ_ANDROID
+void tp_android_set_jvm(void *java_vm) {
+    pj_jni_set_jvm(java_vm);
+}
+#endif
+
 static pj_str_t tp_pj_str(const char *value) {
     return pj_str((char *)value);
 }
@@ -65,6 +80,20 @@ static int tp_fail(tp_engine *engine, pj_status_t status, const char *operation)
              status);
     tp_emit(TP_EVENT_ERROR, engine->call_id, "", engine->last_error);
     return status != PJ_SUCCESS ? status : -1;
+}
+
+static int tp_ensure_thread_registered(tp_engine *engine) {
+    pj_status_t status;
+    if (pj_thread_is_registered()) {
+        return 0;
+    }
+    memset(external_thread_desc, 0, sizeof(external_thread_desc));
+    status = pj_thread_register("tsumuji-api",
+                                external_thread_desc,
+                                &external_thread);
+    return status == PJ_SUCCESS
+               ? 0
+               : tp_fail(engine, status, "pj_thread_register");
 }
 
 static void tp_on_incoming_call(pjsua_acc_id account_id,
@@ -236,7 +265,11 @@ int tp_engine_start(const tp_config *config,
 
     pjsua_media_config_default(&media_config);
     media_config.clock_rate = 8000;
+#if defined(PJ_ANDROID) && PJ_ANDROID
+    media_config.snd_clock_rate = 48000;
+#else
     media_config.snd_clock_rate = 8000;
+#endif
     media_config.channel_count = 1;
     media_config.audio_frame_ptime = 20;
     media_config.ec_tail_len = 200;
@@ -317,6 +350,10 @@ int tp_engine_stop(tp_engine *engine) {
     if (engine != active_engine) {
         return -1;
     }
+    status = tp_ensure_thread_registered(engine);
+    if (status != 0) {
+        return status;
+    }
     status = pjsua_destroy();
     active_engine = NULL;
     free(engine);
@@ -331,6 +368,10 @@ int tp_engine_dial(tp_engine *engine, const char *number) {
     if (engine == NULL || number == NULL ||
         engine->call_id != PJSUA_INVALID_ID) {
         return -1;
+    }
+    status = tp_ensure_thread_registered(engine);
+    if (status != 0) {
+        return status;
     }
     snprintf(destination, sizeof(destination), "sip:%s@%s", number, engine->server);
     uri = tp_pj_str(destination);
@@ -352,6 +393,10 @@ int tp_engine_answer(tp_engine *engine) {
     if (engine == NULL || engine->call_id == PJSUA_INVALID_ID) {
         return -1;
     }
+    status = tp_ensure_thread_registered(engine);
+    if (status != 0) {
+        return status;
+    }
     status = pjsua_call_answer(engine->call_id, PJSIP_SC_OK, NULL, NULL);
     return status == PJ_SUCCESS ? 0 : tp_fail(engine, status, "pjsua_call_answer");
 }
@@ -361,6 +406,10 @@ int tp_engine_reject(tp_engine *engine) {
     if (engine == NULL || engine->call_id == PJSUA_INVALID_ID) {
         return -1;
     }
+    status = tp_ensure_thread_registered(engine);
+    if (status != 0) {
+        return status;
+    }
     status = pjsua_call_answer(engine->call_id, PJSIP_SC_BUSY_HERE, NULL, NULL);
     return status == PJ_SUCCESS ? 0 : tp_fail(engine, status, "pjsua_call_answer(486)");
 }
@@ -369,6 +418,10 @@ int tp_engine_hang_up(tp_engine *engine) {
     pj_status_t status;
     if (engine == NULL || engine->call_id == PJSUA_INVALID_ID) {
         return -1;
+    }
+    status = tp_ensure_thread_registered(engine);
+    if (status != 0) {
+        return status;
     }
     status = pjsua_call_hangup(engine->call_id, 0, NULL, NULL);
     return status == PJ_SUCCESS ? 0 : tp_fail(engine, status, "pjsua_call_hangup");
@@ -382,6 +435,10 @@ int tp_engine_send_dtmf(tp_engine *engine, char digit) {
         strchr("0123456789*#", digit) == NULL) {
         return -1;
     }
+    status = tp_ensure_thread_registered(engine);
+    if (status != 0) {
+        return status;
+    }
     status = pjsua_call_dial_dtmf(engine->call_id, &value);
     return status == PJ_SUCCESS ? 0 : tp_fail(engine, status, "pjsua_call_dial_dtmf");
 }
@@ -391,6 +448,10 @@ int tp_engine_set_muted(tp_engine *engine, int muted) {
     pj_status_t status;
     if (engine == NULL || engine->call_id == PJSUA_INVALID_ID) {
         return -1;
+    }
+    status = tp_ensure_thread_registered(engine);
+    if (status != 0) {
+        return status;
     }
     call_port = pjsua_call_get_conf_port(engine->call_id);
     if (call_port == PJSUA_INVALID_ID) {

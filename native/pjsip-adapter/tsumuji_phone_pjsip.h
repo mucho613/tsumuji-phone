@@ -40,6 +40,7 @@ typedef struct tp_event {
 
 typedef void (*tp_event_callback)(void *user_data, const tp_event *event);
 
+void tp_android_set_jvm(void *java_vm);
 int tp_engine_start(const tp_config *config,
                     tp_event_callback callback,
                     void *user_data,

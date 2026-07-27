@@ -32,6 +32,8 @@ struct TpEvent {
 type TpEventCallback = unsafe extern "C" fn(*mut c_void, *const TpEvent);
 
 unsafe extern "C" {
+    #[cfg(target_os = "android")]
+    fn tp_android_set_jvm(java_vm: *mut c_void);
     fn tp_engine_start(
         config: *const TpConfig,
         callback: TpEventCallback,
@@ -46,6 +48,13 @@ unsafe extern "C" {
     fn tp_engine_send_dtmf(engine: *mut TpEngine, digit: c_char) -> c_int;
     fn tp_engine_set_muted(engine: *mut TpEngine, muted: c_int) -> c_int;
     fn tp_last_error(engine: *const TpEngine) -> *const c_char;
+}
+
+#[cfg(target_os = "android")]
+pub fn set_android_java_vm(java_vm: usize) {
+    unsafe {
+        tp_android_set_jvm(java_vm as *mut c_void);
+    }
 }
 
 #[derive(Debug, Default)]

@@ -117,6 +117,8 @@ fn is_valid_server(server: &str) -> bool {
 pub enum RegistrationState {
     #[default]
     Stopped,
+    PlatformReady,
+    PushReady,
     Registering,
     Registered,
     RetryWaiting,
