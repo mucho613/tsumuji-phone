@@ -33,9 +33,5 @@ make dep
 make -j"$jobs" lib
 make install
 
-cat >"$root/target/pjproject-env.sh" <<EOF
-export PKG_CONFIG_PATH="$prefix/lib/pkgconfig:\${PKG_CONFIG_PATH:-}"
-EOF
-
 printf '\nPJSIP installed under %s\n' "$prefix"
-printf 'Run: source target/pjproject-env.sh\n'
+printf 'Cargo will discover this installation automatically.\n'

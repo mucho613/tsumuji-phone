@@ -36,10 +36,29 @@ fn adapter_build() -> cc::Build {
 }
 
 fn build_unix() {
+    let pkg_config_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/pjproject/lib/pkgconfig");
+    let pkg_config_file = pkg_config_dir.join("libpjproject.pc");
+    assert!(
+        pkg_config_file.is_file(),
+        "vendored PJSIP was not found at {}; run scripts/build-pjsip-linux.sh first",
+        pkg_config_file.display()
+    );
+    println!("cargo:rerun-if-changed={}", pkg_config_file.display());
+
+    let mut pkg_config_paths = env::var_os("PKG_CONFIG_PATH")
+        .map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
+        .unwrap_or_default();
+    pkg_config_paths.retain(|path| path != &pkg_config_dir);
+    pkg_config_paths.insert(0, pkg_config_dir);
+    let pkg_config_path = env::join_paths(pkg_config_paths)
+        .expect("PKG_CONFIG_PATH contains a path that cannot be represented");
+    env::set_var("PKG_CONFIG_PATH", pkg_config_path);
+
     let library = pkg_config::Config::new()
         .statik(true)
         .probe("libpjproject")
-        .expect("native-pjsip requires libpjproject.pc; run scripts/build-pjsip-linux.sh first");
+        .expect("vendored PJSIP 2.17 could not be loaded");
 
     let mut build = adapter_build();
     for include in &library.include_paths {

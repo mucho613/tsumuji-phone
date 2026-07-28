@@ -38,15 +38,16 @@ PJSIP を静的ビルドしてネイティブアダプターを検査:
 
 ```bash
 ./scripts/build-pjsip-linux.sh
-source target/pjproject-env.sh
 cargo check -p telephony-pjsip --features native-pjsip
 cargo run -p tsumuji-phone-cli -- backend
 ```
 
+Cargo は `target/pjproject` の PJSIP を自動検出するため、Bash と fish のどちらでも
+シェル固有の環境設定は不要です。
+
 アプリを PJSIP 付きで起動:
 
 ```bash
-source target/pjproject-env.sh
 npm run tauri dev -- --features native-pjsip
 ```
 
