@@ -8,7 +8,7 @@ WSL 内ではなく、Windows の PowerShell から実行してください。
 次をインストールします。
 
 - Git for Windows
-- Rustup（既定の `stable-x86_64-pc-windows-msvc`）
+- Rustup（Rust 1.87 以上、既定の `stable-x86_64-pc-windows-msvc`）
 - Node.js 22 LTS
 - Visual Studio 2022 Build Tools
   - `Desktop development with C++`

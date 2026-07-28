@@ -7,6 +7,9 @@
 
 - PJSIP 2.17: GPL-2.0-or-later（GPL 選択で利用）
 - Tauri 2: Apache-2.0 / MIT
+- Rodio: Apache-2.0 / MIT
+- CPAL: Apache-2.0
+- rfd: MIT
 - React: MIT
 - Lucide: ISC
 - Firebase Android SDK / Firebase Cloud Messaging: Apache-2.0

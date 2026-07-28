@@ -2,22 +2,27 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Bell,
+  BellOff,
   Bluetooth,
   Cable,
   Cast,
   Check,
   Delete,
   ExternalLink,
+  FileAudio,
   Headphones,
   Mic,
   MicOff,
   Phone,
   PhoneCall,
   PhoneOff,
+  Play,
+  RotateCcw,
   Speaker,
   Settings,
   ShieldAlert,
   Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 import "./App.css";
@@ -113,12 +118,42 @@ type AudioRouteState = {
   error: string | null;
 };
 
+type DesktopAlertMode = "normal" | "quiet";
+
+type DesktopAlertSettings = {
+  mode: DesktopAlertMode;
+  volume: number;
+  ringtoneFileName: string | null;
+  outputDeviceId: string | null;
+  outputDeviceName: string | null;
+  previewing: boolean;
+  playbackError: string | null;
+  deviceFallback: boolean;
+};
+
+type DesktopAudioDevice = {
+  id: string;
+  name: string;
+  isDefault: boolean;
+};
+
 const initialAudioRouteState: AudioRouteState = {
   status: "inactive",
   current: null,
   routes: [],
   bluetoothPermission: "unavailable",
   error: null,
+};
+
+const initialDesktopAlertSettings: DesktopAlertSettings = {
+  mode: "normal",
+  volume: 100,
+  ringtoneFileName: null,
+  outputDeviceId: null,
+  outputDeviceName: null,
+  previewing: false,
+  playbackError: null,
+  deviceFallback: false,
 };
 
 const initialPlatformInfo: PlatformInfo = {
@@ -201,6 +236,21 @@ function formatCallDuration(totalSeconds: number) {
     : `${minuteText}:${secondText}`;
 }
 
+function formatCallPeer(peer: string) {
+  const trimmed = peer.trim();
+  if (!trimmed) return "番号非通知";
+  const sipMatch = trimmed.match(/sips?:([^@;>\s]+)/i);
+  const identifier = sipMatch?.[1] ?? trimmed.split(/[@;>\s]/, 1)[0];
+  if (!identifier || identifier.toLowerCase() === "anonymous") {
+    return "番号非通知";
+  }
+  try {
+    return decodeURIComponent(identifier);
+  } catch {
+    return identifier;
+  }
+}
+
 function audioRouteTypeLabel(type: AudioRouteType) {
   switch (type) {
     case "earpiece":
@@ -256,6 +306,16 @@ function App() {
   const [audioRouteOpen, setAudioRouteOpen] = useState(false);
   const [audioRouteBusy, setAudioRouteBusy] = useState(false);
   const [audioRouteError, setAudioRouteError] = useState("");
+  const [desktopAlertSettings, setDesktopAlertSettings] = useState(
+    initialDesktopAlertSettings,
+  );
+  const [desktopAudioDevices, setDesktopAudioDevices] = useState<
+    DesktopAudioDevice[]
+  >([]);
+  const [desktopDeviceOpen, setDesktopDeviceOpen] = useState(false);
+  const [desktopDeviceBusy, setDesktopDeviceBusy] = useState(false);
+  const [desktopAlertBusy, setDesktopAlertBusy] = useState(false);
+  const [desktopAlertError, setDesktopAlertError] = useState("");
   const audioRouteDialog = useRef<HTMLDialogElement>(null);
   const restoredAndroidSettings = useRef(false);
   const restoredPushSettings = useRef(false);
@@ -301,6 +361,40 @@ function App() {
       window.clearInterval(platformTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (platformInfo.isAndroid) return;
+    const refresh = () => {
+      invoke<DesktopAlertSettings>("get_desktop_alert_settings")
+        .then(setDesktopAlertSettings)
+        .catch(() => undefined);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 1000);
+    return () => window.clearInterval(timer);
+  }, [platformInfo.isAndroid]);
+
+  useEffect(() => {
+    if (
+      platformInfo.isAndroid ||
+      tab === "settings" ||
+      !desktopAlertSettings.previewing
+    )
+      return;
+    void invoke<DesktopAlertSettings>("stop_desktop_ringtone_preview")
+      .then(setDesktopAlertSettings)
+      .catch(() => undefined);
+  }, [desktopAlertSettings.previewing, platformInfo.isAndroid, tab]);
+
+  useEffect(() => {
+    if (!desktopAlertSettings.previewing) return;
+    const timer = window.setTimeout(() => {
+      void invoke<DesktopAlertSettings>("stop_desktop_ringtone_preview")
+        .then(setDesktopAlertSettings)
+        .catch(() => undefined);
+    }, 10_000);
+    return () => window.clearTimeout(timer);
+  }, [desktopAlertSettings.previewing]);
 
   useEffect(() => {
     if (!androidAudioRouteEligible) {
@@ -487,6 +581,42 @@ function App() {
     );
   }
 
+  async function updateDesktopAlert(
+    action: () => Promise<DesktopAlertSettings>,
+  ) {
+    setDesktopAlertBusy(true);
+    setDesktopAlertError("");
+    try {
+      setDesktopAlertSettings(await action());
+    } catch (reason) {
+      setDesktopAlertError(String(reason));
+    } finally {
+      setDesktopAlertBusy(false);
+    }
+  }
+
+  async function refreshDesktopAudioDevices() {
+    setDesktopDeviceBusy(true);
+    setDesktopAlertError("");
+    try {
+      setDesktopAudioDevices(
+        await invoke<DesktopAudioDevice[]>(
+          "list_desktop_ringtone_devices",
+        ),
+      );
+    } catch (reason) {
+      setDesktopAlertError(String(reason));
+    } finally {
+      setDesktopDeviceBusy(false);
+    }
+  }
+
+  function toggleDesktopDevicePanel() {
+    const opening = !desktopDeviceOpen;
+    setDesktopDeviceOpen(opening);
+    if (opening) void refreshDesktopAudioDevices();
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -498,6 +628,27 @@ function App() {
           <span aria-hidden="true" />
           {registrationLabels[phoneState.registration]}
         </div>
+        {!platformInfo.isAndroid && (
+          <div
+            className={`desktop-alert-mode desktop-alert-mode-${desktopAlertSettings.mode}`}
+            title={
+              desktopAlertSettings.mode === "normal"
+                ? "通常モード"
+                : "着信を通知しないモード"
+            }
+          >
+            {desktopAlertSettings.mode === "normal" ? (
+              <Bell size={15} />
+            ) : (
+              <BellOff size={15} />
+            )}
+            <span>
+              {desktopAlertSettings.mode === "normal"
+                ? "通常"
+                : "通知しない"}
+            </span>
+          </div>
+        )}
       </header>
 
       <section className="content">
@@ -509,7 +660,7 @@ function App() {
                   <span className="call-phase">
                     {phoneState.call.phase === "ringing" ? "着信" : "通話"}
                   </span>
-                  <strong>{phoneState.call.peer || "番号非通知"}</strong>
+                  <strong>{formatCallPeer(phoneState.call.peer)}</strong>
                   {phoneState.call.phase === "active" &&
                     phoneState.call.activeElapsedSeconds !== null && (
                       <span className="call-duration">
@@ -1006,11 +1157,219 @@ function App() {
                     <span className="label-with-icon">
                       <Volume2 size={16} /> 着信音
                     </span>
-                    <select defaultValue="default">
-                      <option value="default">システム既定</option>
-                    </select>
+                    <div className="desktop-device-picker">
+                      <button
+                        className="desktop-device-trigger"
+                        type="button"
+                        aria-expanded={desktopDeviceOpen}
+                        disabled={Boolean(phoneState.call)}
+                        onClick={toggleDesktopDevicePanel}
+                      >
+                        {desktopAlertSettings.outputDeviceName ??
+                          "システム既定"}
+                      </button>
+                      {desktopDeviceOpen && (
+                        <div className="desktop-device-options">
+                          {desktopDeviceBusy && (
+                            <p>デバイスを検索中…</p>
+                          )}
+                          <button
+                            type="button"
+                            className={
+                              desktopAlertSettings.outputDeviceId === null
+                                ? "selected"
+                                : ""
+                            }
+                            onClick={() => {
+                              setDesktopDeviceOpen(false);
+                              void updateDesktopAlert(() =>
+                                invoke("set_desktop_ringtone_device", {
+                                  deviceId: null,
+                                }),
+                              );
+                            }}
+                          >
+                            <span>システム既定</span>
+                            {desktopAlertSettings.outputDeviceId === null && (
+                              <Check size={17} />
+                            )}
+                          </button>
+                          {desktopAudioDevices.map((device) => (
+                            <button
+                              key={device.id}
+                              type="button"
+                              className={
+                                desktopAlertSettings.outputDeviceId ===
+                                device.id
+                                  ? "selected"
+                                  : ""
+                              }
+                              onClick={() => {
+                                setDesktopDeviceOpen(false);
+                                void updateDesktopAlert(() =>
+                                  invoke("set_desktop_ringtone_device", {
+                                    deviceId: device.id,
+                                  }),
+                                );
+                              }}
+                            >
+                              <span>
+                                {device.name}
+                                {device.isDefault && (
+                                  <small>現在のシステム既定</small>
+                                )}
+                              </span>
+                              {desktopAlertSettings.outputDeviceId ===
+                                device.id && <Check size={17} />}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </label>
                 </>
+              </section>
+            )}
+
+            {!platformInfo.isAndroid && (
+              <section className="ringtone-settings">
+                <h2>着信設定</h2>
+                <label>
+                  通知モード
+                  <select
+                    value={desktopAlertSettings.mode}
+                    disabled={desktopAlertBusy}
+                    onChange={(event) =>
+                      void updateDesktopAlert(() =>
+                        invoke("set_desktop_alert_mode", {
+                          mode: event.currentTarget.value,
+                        }),
+                      )
+                    }
+                  >
+                    <option value="normal">通常モード</option>
+                    <option value="quiet">
+                      着信を通知しないモード
+                    </option>
+                  </select>
+                </label>
+                <p className="setting-help">
+                  通常モードでは着信時に画面を表示して着信音を鳴らします。
+                  通知しないモードでは、着信があっても画面や音で知らせません。
+                </p>
+
+                <div className="ringtone-file">
+                  <span>着信音</span>
+                  <strong>
+                    {desktopAlertSettings.ringtoneFileName ??
+                      "Tsumuji Phone 既定"}
+                  </strong>
+                  <div>
+                    <button
+                      className="secondary-command"
+                      type="button"
+                      disabled={
+                        desktopAlertBusy || Boolean(phoneState.call)
+                      }
+                      onClick={() =>
+                        void updateDesktopAlert(() =>
+                          invoke("choose_desktop_ringtone"),
+                        )
+                      }
+                    >
+                      <FileAudio size={17} />
+                      ファイルを選択
+                    </button>
+                    <button
+                      className="secondary-command"
+                      type="button"
+                      disabled={
+                        desktopAlertBusy ||
+                        Boolean(phoneState.call) ||
+                        desktopAlertSettings.ringtoneFileName === null
+                      }
+                      onClick={() =>
+                        void updateDesktopAlert(() =>
+                          invoke("reset_desktop_ringtone"),
+                        )
+                      }
+                    >
+                      <RotateCcw size={17} />
+                      既定に戻す
+                    </button>
+                  </div>
+                  <small>WAV、MP3、OGG Vorbis、FLACに対応</small>
+                </div>
+
+                <label>
+                  <span className="ringtone-volume-label">
+                    着信音量
+                    <strong>{desktopAlertSettings.volume}</strong>
+                  </span>
+                  <div className="ringtone-volume">
+                    <VolumeX size={18} />
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={desktopAlertSettings.volume}
+                      disabled={desktopAlertBusy}
+                      onChange={(event) => {
+                        const volume = Number(event.currentTarget.value);
+                        setDesktopAlertSettings((current) => ({
+                          ...current,
+                          volume,
+                        }));
+                        void invoke<DesktopAlertSettings>(
+                          "set_desktop_ringtone_volume",
+                          { volume },
+                        )
+                          .then(setDesktopAlertSettings)
+                          .catch((reason) =>
+                            setDesktopAlertError(String(reason)),
+                          );
+                      }}
+                    />
+                    <Volume2 size={18} />
+                  </div>
+                </label>
+
+                <button
+                  className="secondary-command ringtone-preview"
+                  type="button"
+                  disabled={
+                    desktopAlertBusy || Boolean(phoneState.call)
+                  }
+                  onClick={() =>
+                    void updateDesktopAlert(() =>
+                      invoke(
+                        desktopAlertSettings.previewing
+                          ? "stop_desktop_ringtone_preview"
+                          : "start_desktop_ringtone_preview",
+                      ),
+                    )
+                  }
+                >
+                  {desktopAlertSettings.previewing ? (
+                    <>
+                      <VolumeX size={18} />
+                      停止
+                    </>
+                  ) : (
+                    <>
+                      <Play size={18} />
+                      試聴
+                    </>
+                  )}
+                </button>
+
+                {(desktopAlertError ||
+                  desktopAlertSettings.playbackError) && (
+                  <p className="ringtone-error" role="alert">
+                    {desktopAlertError ||
+                      desktopAlertSettings.playbackError}
+                  </p>
+                )}
               </section>
             )}
 

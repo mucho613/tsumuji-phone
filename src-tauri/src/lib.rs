@@ -2,6 +2,8 @@
 
 #[cfg(target_os = "android")]
 mod android_platform;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod desktop_alerts;
 
 use std::sync::{Arc, Mutex};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -17,7 +19,7 @@ use std::{
 };
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle,
 };
@@ -530,8 +532,216 @@ async fn reset_credentials(
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
+        let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn setup_desktop_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let alerts = Arc::new(desktop_alerts::DesktopAlerts::new(app.handle())?);
+    app.manage(Arc::clone(&alerts));
+    let mode = alerts.mode();
+    let show = MenuItem::with_id(app, "show", "表示", true, None::<&str>)?;
+    let normal_mode = CheckMenuItem::with_id(
+        app,
+        "alert-normal",
+        "通常モード",
+        true,
+        mode == desktop_alerts::DesktopAlertMode::Normal,
+        None::<&str>,
+    )?;
+    let quiet_mode = CheckMenuItem::with_id(
+        app,
+        "alert-quiet",
+        "着信を通知しないモード",
+        true,
+        mode == desktop_alerts::DesktopAlertMode::Quiet,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &normal_mode, &quiet_mode, &quit])?;
+    app.manage(desktop_alerts::DesktopTrayMenu {
+        normal: normal_mode,
+        quiet: quiet_mode,
+    });
+    TrayIconBuilder::new()
+        .icon(
+            app.default_window_icon()
+                .cloned()
+                .expect("application icon"),
+        )
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_main_window(app),
+            "alert-normal" | "alert-quiet" => {
+                let mode = if event.id.as_ref() == "alert-normal" {
+                    desktop_alerts::DesktopAlertMode::Normal
+                } else {
+                    desktop_alerts::DesktopAlertMode::Quiet
+                };
+                let phone = app
+                    .state::<Controller>()
+                    .engine
+                    .lock()
+                    .map_or_else(|_| PhoneSnapshot::default(), |engine| engine.snapshot());
+                let _ = app
+                    .state::<Arc<desktop_alerts::DesktopAlerts>>()
+                    .set_mode(app, mode, &phone);
+            }
+            "quit" => {
+                let _ = app
+                    .state::<Arc<desktop_alerts::DesktopAlerts>>()
+                    .stop_preview();
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    let engine = Arc::clone(&app.state::<Controller>().engine);
+    desktop_alerts::start_monitor(app.handle().clone(), engine, alerts);
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn get_desktop_alert_settings(
+    alerts: State<'_, Arc<desktop_alerts::DesktopAlerts>>,
+) -> Result<desktop_alerts::DesktopAlertSettings, String> {
+    alerts.snapshot()
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn get_desktop_alert_settings() -> Result<(), String> {
+    Err("デスクトップ版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn set_desktop_alert_mode(
+    mode: desktop_alerts::DesktopAlertMode,
+    app: AppHandle,
+    controller: State<'_, Controller>,
+    alerts: State<'_, Arc<desktop_alerts::DesktopAlerts>>,
+) -> Result<desktop_alerts::DesktopAlertSettings, String> {
+    let phone = controller.engine.lock().map_err(backend_error)?.snapshot();
+    alerts.set_mode(&app, mode, &phone)
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn set_desktop_alert_mode() -> Result<(), String> {
+    Err("デスクトップ版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn set_desktop_ringtone_volume(
+    volume: u8,
+    alerts: State<'_, Arc<desktop_alerts::DesktopAlerts>>,
+) -> Result<desktop_alerts::DesktopAlertSettings, String> {
+    alerts.set_volume(volume)
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn set_desktop_ringtone_volume() -> Result<(), String> {
+    Err("デスクトップ版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn choose_desktop_ringtone(
+    alerts: State<'_, Arc<desktop_alerts::DesktopAlerts>>,
+) -> Result<desktop_alerts::DesktopAlertSettings, String> {
+    alerts.choose_ringtone()
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn choose_desktop_ringtone() -> Result<(), String> {
+    Err("デスクトップ版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn reset_desktop_ringtone(
+    alerts: State<'_, Arc<desktop_alerts::DesktopAlerts>>,
+) -> Result<desktop_alerts::DesktopAlertSettings, String> {
+    alerts.reset_ringtone()
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn reset_desktop_ringtone() -> Result<(), String> {
+    Err("デスクトップ版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn list_desktop_ringtone_devices() -> Result<Vec<desktop_alerts::DesktopAudioDevice>, String> {
+    desktop_alerts::list_output_devices()
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn list_desktop_ringtone_devices() -> Result<Vec<String>, String> {
+    Err("デスクトップ版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn set_desktop_ringtone_device(
+    device_id: Option<String>,
+    alerts: State<'_, Arc<desktop_alerts::DesktopAlerts>>,
+) -> Result<desktop_alerts::DesktopAlertSettings, String> {
+    alerts.set_output_device(device_id)
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn set_desktop_ringtone_device() -> Result<(), String> {
+    Err("デスクトップ版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn start_desktop_ringtone_preview(
+    alerts: State<'_, Arc<desktop_alerts::DesktopAlerts>>,
+) -> Result<desktop_alerts::DesktopAlertSettings, String> {
+    alerts.start_preview()
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn start_desktop_ringtone_preview() -> Result<(), String> {
+    Err("デスクトップ版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn stop_desktop_ringtone_preview(
+    alerts: State<'_, Arc<desktop_alerts::DesktopAlerts>>,
+) -> Result<desktop_alerts::DesktopAlertSettings, String> {
+    alerts.stop_preview()
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn stop_desktop_ringtone_preview() -> Result<(), String> {
+    Err("デスクトップ版でのみ使用できます".into())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -550,36 +760,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             show_main_window(app);
         }))
-        .setup(|app| {
-            let show = MenuItem::with_id(app, "show", "表示", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
-            TrayIconBuilder::new()
-                .icon(
-                    app.default_window_icon()
-                        .cloned()
-                        .expect("application icon"),
-                )
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => show_main_window(app),
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        show_main_window(tray.app_handle());
-                    }
-                })
-                .build(app)?;
-            Ok(())
-        })
+        .setup(setup_desktop_app)
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -606,7 +787,16 @@ pub fn run() {
         request_bluetooth_audio_permission,
         open_bluetooth_audio_settings,
         set_audio_route,
-        pair_push_gateway
+        pair_push_gateway,
+        get_desktop_alert_settings,
+        set_desktop_alert_mode,
+        set_desktop_ringtone_volume,
+        choose_desktop_ringtone,
+        reset_desktop_ringtone,
+        list_desktop_ringtone_devices,
+        set_desktop_ringtone_device,
+        start_desktop_ringtone_preview,
+        stop_desktop_ringtone_preview
     ]);
     #[cfg(target_os = "android")]
     {

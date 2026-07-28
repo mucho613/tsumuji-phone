@@ -47,7 +47,7 @@ button {
 
 .app-header {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 9px;
   padding: env(safe-area-inset-top, 0px) 16px 0;
@@ -98,6 +98,24 @@ h1 {
 
 .status-error span {
   background: #ff8f83;
+}
+
+.desktop-alert-mode {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  color: #dff4ea;
+  background: rgb(255 255 255 / 8%);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.desktop-alert-mode-quiet {
+  color: #d4dcda;
+  background: rgb(0 0 0 / 14%);
 }
 
 .content {
@@ -615,6 +633,159 @@ h1 {
   gap: 7px;
 }
 
+.desktop-device-picker {
+  position: relative;
+}
+
+.desktop-device-trigger {
+  width: 100%;
+  height: 40px;
+  padding: 0 10px;
+  color: #172023;
+  background: #ffffff;
+  border: 1px solid #bdcac6;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.desktop-device-trigger:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.desktop-device-options {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  max-height: 220px;
+  padding: 4px;
+  overflow: auto;
+  background: #ffffff;
+  border: 1px solid #bdcac6;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(19 48 43 / 18%);
+}
+
+.desktop-device-options p {
+  margin: 0;
+  padding: 8px;
+  color: #60736d;
+  font-size: 12px;
+}
+
+.desktop-device-options button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.desktop-device-options button:hover,
+.desktop-device-options button.selected {
+  background: #e5f1ec;
+}
+
+.desktop-device-options button span {
+  display: grid;
+  gap: 2px;
+}
+
+.desktop-device-options button small {
+  color: #60736d;
+  font-size: 10px;
+}
+
+.ringtone-settings {
+  padding-top: 2px;
+  border-top: 1px solid #d2dcda;
+}
+
+.ringtone-settings h2 {
+  margin-top: 18px;
+}
+
+.setting-help {
+  margin: -5px 0 14px;
+  color: #60736d;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.ringtone-file {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  color: #536660;
+  font-size: 12px;
+}
+
+.ringtone-file strong {
+  overflow: hidden;
+  color: #203b35;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ringtone-file > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ringtone-file .secondary-command {
+  margin-top: 0;
+}
+
+.ringtone-file small {
+  color: #60736d;
+  font-size: 10px;
+}
+
+.ringtone-volume-label {
+  display: flex;
+  justify-content: space-between;
+}
+
+.ringtone-volume {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings .ringtone-volume input[type="range"] {
+  height: 24px;
+  padding: 0;
+  accent-color: #176e4d;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.ringtone-preview {
+  margin-top: 0;
+}
+
+.ringtone-error {
+  margin: 9px 0 0;
+  color: #8f211d;
+  font-size: 11px;
+  line-height: 16px;
+}
+
 .primary-command,
 .danger-command {
   display: flex;
@@ -693,6 +864,8 @@ h1 {
   .key,
   .settings input,
   .settings select,
+  .desktop-device-trigger,
+  .desktop-device-options,
   .bottom-nav {
     color: #e8efec;
     background: #252f2c;
@@ -735,6 +908,31 @@ h1 {
     color: #d7e7e1;
     background: #2c3c37;
     border-color: #52665f;
+  }
+
+  .desktop-device-options button:hover,
+  .desktop-device-options button.selected {
+    background: #31443e;
+  }
+
+  .ringtone-settings {
+    border-color: #465651;
+  }
+
+  .ringtone-file strong {
+    color: #e8efec;
+  }
+
+  .setting-help,
+  .ringtone-file,
+  .ringtone-file small,
+  .desktop-device-options p,
+  .desktop-device-options button small {
+    color: #a8b8b3;
+  }
+
+  .ringtone-error {
+    color: #ffc0b9;
   }
 
   .platform-summary strong {
