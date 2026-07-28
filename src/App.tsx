@@ -30,6 +30,7 @@ type Call = {
   peer: string;
   direction: "incoming" | "outgoing";
   phase: "ringing" | "dialing" | "connecting" | "active" | "ending";
+  activeElapsedSeconds: number | null;
 };
 
 type PhoneState = {
@@ -146,6 +147,18 @@ function formatPushTime(timestamp: number | null) {
     minute: "2-digit",
     second: "2-digit",
   }).format(new Date(timestamp));
+}
+
+function formatCallDuration(totalSeconds: number) {
+  const elapsed = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(elapsed / 3600);
+  const minutes = Math.floor((elapsed % 3600) / 60);
+  const seconds = elapsed % 60;
+  const minuteText = minutes.toString().padStart(2, "0");
+  const secondText = seconds.toString().padStart(2, "0");
+  return hours > 0
+    ? `${hours}:${minuteText}:${secondText}`
+    : `${minuteText}:${secondText}`;
 }
 
 function App() {
@@ -324,6 +337,14 @@ function App() {
                     {phoneState.call.phase === "ringing" ? "着信" : "通話"}
                   </span>
                   <strong>{phoneState.call.peer || "番号非通知"}</strong>
+                  {phoneState.call.phase === "active" &&
+                    phoneState.call.activeElapsedSeconds !== null && (
+                      <span className="call-duration">
+                        {formatCallDuration(
+                          phoneState.call.activeElapsedSeconds,
+                        )}
+                      </span>
+                    )}
                 </div>
               ) : (
                 <div className="number-input-wrap">

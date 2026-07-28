@@ -602,6 +602,7 @@ mod tests {
             peer: "sip:117@asterisk".into(),
             direction: CallDirection::Outgoing,
             phase: CallPhase::Active,
+            active_elapsed_seconds: Some(12),
         };
         let engine_snapshot = PhoneSnapshot {
             registration: RegistrationState::Registered,

@@ -136,6 +136,14 @@ h1 {
   font-size: 12px;
 }
 
+.call-duration {
+  display: block;
+  margin-top: 6px;
+  color: #415953;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+}
+
 .number-input-wrap {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 40px;

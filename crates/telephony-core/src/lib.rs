@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{fmt, net::Ipv4Addr};
+use std::{fmt, net::Ipv4Addr, time::Instant};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,6 +161,8 @@ pub struct CallSnapshot {
     pub peer: String,
     pub direction: CallDirection,
     pub phase: CallPhase,
+    #[serde(default)]
+    pub active_elapsed_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,12 +264,23 @@ pub trait TelephonyEngine: Send {
 #[derive(Debug, Default)]
 pub struct StateMachine {
     snapshot: PhoneSnapshot,
+    active_since: Option<Instant>,
 }
 
 impl StateMachine {
     #[must_use]
     pub fn snapshot(&self) -> PhoneSnapshot {
-        self.snapshot.clone()
+        let mut snapshot = self.snapshot.clone();
+        if let Some(call) = snapshot.call.as_mut() {
+            call.active_elapsed_seconds = if call.phase == CallPhase::Active {
+                self.active_since
+                    .as_ref()
+                    .map(|started| started.elapsed().as_secs())
+            } else {
+                None
+            };
+        }
+        snapshot
     }
 
     /// Apply an event while enforcing single-call state transitions.
@@ -289,12 +302,14 @@ impl StateMachine {
             }
             EngineEvent::IncomingCall { id, peer } => {
                 self.ensure_idle("receive a call")?;
+                self.active_since = None;
                 self.snapshot.last_call_reason = None;
                 self.snapshot.call = Some(CallSnapshot {
                     id,
                     peer,
                     direction: CallDirection::Incoming,
                     phase: CallPhase::Ringing,
+                    active_elapsed_seconds: None,
                 });
                 self.snapshot.muted = false;
             }
@@ -305,12 +320,14 @@ impl StateMachine {
                         "outgoing calls require registration".into(),
                     ));
                 }
+                self.active_since = None;
                 self.snapshot.last_call_reason = None;
                 self.snapshot.call = Some(CallSnapshot {
                     id,
                     peer,
                     direction: CallDirection::Outgoing,
                     phase: CallPhase::Dialing,
+                    active_elapsed_seconds: None,
                 });
                 self.snapshot.muted = false;
             }
@@ -318,10 +335,19 @@ impl StateMachine {
                 self.call_mut(id)?.phase = CallPhase::Connecting;
             }
             EngineEvent::CallActive { id } => {
+                let was_active = self
+                    .snapshot
+                    .call
+                    .as_ref()
+                    .is_some_and(|call| call.id == id && call.phase == CallPhase::Active);
                 self.call_mut(id)?.phase = CallPhase::Active;
+                if !was_active {
+                    self.active_since = Some(Instant::now());
+                }
             }
             EngineEvent::CallEnded { id, reason } => {
                 self.call_mut(id)?;
+                self.active_since = None;
                 self.snapshot.call = None;
                 self.snapshot.muted = false;
                 self.snapshot.last_call_reason = Some(reason);
@@ -428,6 +454,22 @@ mod tests {
             state.snapshot().last_call_reason.as_deref(),
             Some("remote hangup")
         );
+    }
+
+    #[test]
+    fn active_call_reports_monotonic_elapsed_seconds() {
+        let mut state = StateMachine::default();
+        state
+            .apply(EngineEvent::IncomingCall {
+                id: 7,
+                peer: "anonymous".into(),
+            })
+            .unwrap();
+        state.apply(EngineEvent::CallActive { id: 7 }).unwrap();
+        state.active_since = Some(Instant::now() - std::time::Duration::from_secs(65));
+
+        let call = state.snapshot().call.unwrap();
+        assert!(call.active_elapsed_seconds.unwrap() >= 65);
     }
 
     #[test]

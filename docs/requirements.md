@@ -21,8 +21,11 @@
 - Tailscale IPv4 が 0 件または複数件の場合は接続を開始せず、理由を表示する
 - RTP/RTCP は 40000-40009。自動取得した Tailscale IPv4 へ明示的に bind
 - PCMU（G.711 μ-law、8 kHz、20 ms）のみ
-- DTMF は RTP telephone-event を優先。未交渉時はインバンドへフォールバック
+- DTMF は RTP telephone-event（RFC 4733）のみ
 - ミュート中も無音 RTP を維持
+- 発信・着信とも通話成立時から単調時計で経過時間を計り、電話画面の相手番号直下へ
+  1秒単位で表示する。1時間未満は `MM:SS`、1時間以上は `H:MM:SS` とし、
+  Android の CallStyle 通知には表示しない
 - 110、118、119 は発信禁止
 
 ## デスクトップ
