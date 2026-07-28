@@ -2,6 +2,10 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Bell,
+  Bluetooth,
+  Cable,
+  Cast,
+  Check,
   Delete,
   ExternalLink,
   Headphones,
@@ -10,9 +14,11 @@ import {
   Phone,
   PhoneCall,
   PhoneOff,
+  Speaker,
   Settings,
   ShieldAlert,
   Volume2,
+  X,
 } from "lucide-react";
 import "./App.css";
 
@@ -79,6 +85,40 @@ type PlatformInfo = {
 type AppliedConnection = {
   server: string;
   userId: string;
+};
+
+type AudioRouteType =
+  | "earpiece"
+  | "speaker"
+  | "wired"
+  | "bluetooth"
+  | "streaming"
+  | "unknown";
+
+type AudioRoute = {
+  id: string;
+  name: string;
+  type: AudioRouteType;
+};
+
+type AudioRouteState = {
+  status: "inactive" | "preparing" | "ready" | "error";
+  current: AudioRoute | null;
+  routes: AudioRoute[];
+  bluetoothPermission:
+    | "granted"
+    | "notRequested"
+    | "denied"
+    | "unavailable";
+  error: string | null;
+};
+
+const initialAudioRouteState: AudioRouteState = {
+  status: "inactive",
+  current: null,
+  routes: [],
+  bluetoothPermission: "unavailable",
+  error: null,
 };
 
 const initialPlatformInfo: PlatformInfo = {
@@ -161,6 +201,40 @@ function formatCallDuration(totalSeconds: number) {
     : `${minuteText}:${secondText}`;
 }
 
+function audioRouteTypeLabel(type: AudioRouteType) {
+  switch (type) {
+    case "earpiece":
+      return "受話口";
+    case "speaker":
+      return "スピーカー";
+    case "wired":
+      return "有線";
+    case "bluetooth":
+      return "Bluetooth";
+    case "streaming":
+      return "外部機器";
+    default:
+      return "音声";
+  }
+}
+
+function audioRouteIcon(type: AudioRouteType | undefined, size = 24) {
+  switch (type) {
+    case "earpiece":
+      return <PhoneCall size={size} />;
+    case "speaker":
+      return <Speaker size={size} />;
+    case "wired":
+      return <Cable size={size} />;
+    case "bluetooth":
+      return <Bluetooth size={size} />;
+    case "streaming":
+      return <Cast size={size} />;
+    default:
+      return <Headphones size={size} />;
+  }
+}
+
 function App() {
   const [tab, setTab] = useState<"phone" | "settings">("phone");
   const [phoneState, setPhoneState] = useState(initialPhoneState);
@@ -176,8 +250,20 @@ function App() {
   const [error, setError] = useState("");
   const [pushMessage, setPushMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [audioRouteState, setAudioRouteState] = useState(
+    initialAudioRouteState,
+  );
+  const [audioRouteOpen, setAudioRouteOpen] = useState(false);
+  const [audioRouteBusy, setAudioRouteBusy] = useState(false);
+  const [audioRouteError, setAudioRouteError] = useState("");
+  const audioRouteDialog = useRef<HTMLDialogElement>(null);
   const restoredAndroidSettings = useRef(false);
   const restoredPushSettings = useRef(false);
+  const androidAudioRouteEligible =
+    platformInfo.isAndroid &&
+    phoneState.call !== null &&
+    phoneState.call.phase !== "ringing" &&
+    phoneState.call.phase !== "ending";
 
   useEffect(() => {
     const refresh = () => {
@@ -216,6 +302,30 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!androidAudioRouteEligible) {
+      setAudioRouteState(initialAudioRouteState);
+      setAudioRouteOpen(false);
+      setAudioRouteError("");
+      return;
+    }
+    void refreshAudioRouteState();
+    const timer = window.setInterval(() => {
+      void refreshAudioRouteState();
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [androidAudioRouteEligible]);
+
+  useEffect(() => {
+    const dialog = audioRouteDialog.current;
+    if (!dialog) return;
+    if (audioRouteOpen && !dialog.open) {
+      dialog.showModal();
+    } else if (!audioRouteOpen && dialog.open) {
+      dialog.close();
+    }
+  }, [audioRouteOpen]);
+
   const statusTone = useMemo(() => {
     if (
       phoneState.registration === "registered" ||
@@ -234,6 +344,12 @@ function App() {
         password.length > 0),
     [appliedConnection, password, server, userId],
   );
+  const currentAudioRouteLabel =
+    audioRouteState.status === "preparing"
+      ? "準備中"
+      : audioRouteState.status === "error"
+        ? "音声エラー"
+        : audioRouteTypeLabel(audioRouteState.current?.type ?? "unknown");
 
   async function perform(action: () => Promise<PhoneState>) {
     setBusy(true);
@@ -296,6 +412,63 @@ function App() {
       setError(String(reason));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function refreshAudioRouteState() {
+    try {
+      setAudioRouteState(
+        await invoke<AudioRouteState>("get_audio_route_state"),
+      );
+    } catch (reason) {
+      setAudioRouteState((current) => ({
+        ...current,
+        status: "error",
+        error: String(reason),
+      }));
+    }
+  }
+
+  async function openAudioRoutePanel() {
+    setAudioRouteError("");
+    setAudioRouteOpen(true);
+    try {
+      let state = await invoke<AudioRouteState>("get_audio_route_state");
+      setAudioRouteState(state);
+      if (state.bluetoothPermission === "notRequested") {
+        await invoke("request_bluetooth_audio_permission");
+        state = await invoke<AudioRouteState>("get_audio_route_state");
+        setAudioRouteState(state);
+      }
+    } catch (reason) {
+      setAudioRouteError(String(reason));
+    }
+  }
+
+  async function selectAudioRoute(route: AudioRoute) {
+    if (route.id === audioRouteState.current?.id) {
+      setAudioRouteOpen(false);
+      return;
+    }
+    setAudioRouteBusy(true);
+    setAudioRouteError("");
+    try {
+      await invoke("set_audio_route", { routeId: route.id });
+      await refreshAudioRouteState();
+      setAudioRouteOpen(false);
+    } catch (reason) {
+      setAudioRouteError(String(reason));
+    } finally {
+      setAudioRouteBusy(false);
+    }
+  }
+
+  async function openBluetoothAudioSettings() {
+    setAudioRouteError("");
+    try {
+      await invoke("open_bluetooth_audio_settings");
+    } catch (reason) {
+      setAudioRouteError(String(reason));
     }
   }
 
@@ -388,7 +561,9 @@ function App() {
               ))}
             </div>
 
-            <div className="call-controls">
+            <div
+              className={`call-controls ${platformInfo.isAndroid ? "android-call-controls" : ""}`}
+            >
               {phoneState.call?.phase === "ringing" ? (
                 <>
                   <button
@@ -411,30 +586,90 @@ function App() {
                   </button>
                 </>
               ) : phoneState.call ? (
-                <>
-                  <button
-                    className={`call-button secondary ${phoneState.muted ? "selected" : ""}`}
-                    type="button"
-                    title={phoneState.muted ? "ミュート解除" : "ミュート"}
-                    disabled={busy || phoneState.call.phase !== "active"}
-                    onClick={() =>
-                      void perform(() =>
-                        invoke("set_muted", { muted: !phoneState.muted }),
-                      )
-                    }
-                  >
-                    {phoneState.muted ? <MicOff size={24} /> : <Mic size={24} />}
-                  </button>
-                  <button
-                    className="call-button hangup"
-                    type="button"
-                    title="通話終了"
-                    disabled={busy}
-                    onClick={() => void perform(() => invoke("hang_up"))}
-                  >
-                    <PhoneOff size={25} />
-                  </button>
-                </>
+                platformInfo.isAndroid ? (
+                  <>
+                    <div className="call-control-item">
+                      <button
+                        className={`call-button secondary ${phoneState.muted ? "selected" : ""}`}
+                        type="button"
+                        title={
+                          phoneState.muted ? "ミュート解除" : "ミュート"
+                        }
+                        disabled={busy || phoneState.call.phase !== "active"}
+                        onClick={() =>
+                          void perform(() =>
+                            invoke("set_muted", {
+                              muted: !phoneState.muted,
+                            }),
+                          )
+                        }
+                      >
+                        {phoneState.muted ? (
+                          <MicOff size={24} />
+                        ) : (
+                          <Mic size={24} />
+                        )}
+                      </button>
+                      <span>{phoneState.muted ? "解除" : "ミュート"}</span>
+                    </div>
+                    <div className="call-control-item">
+                      <button
+                        className="call-button secondary"
+                        type="button"
+                        title={`音声経路: ${currentAudioRouteLabel}`}
+                        disabled={
+                          audioRouteBusy ||
+                          audioRouteState.status !== "ready"
+                        }
+                        onClick={() => void openAudioRoutePanel()}
+                      >
+                        {audioRouteIcon(audioRouteState.current?.type)}
+                      </button>
+                      <span>{currentAudioRouteLabel}</span>
+                    </div>
+                    <div className="call-control-item">
+                      <button
+                        className="call-button hangup"
+                        type="button"
+                        title="通話終了"
+                        disabled={busy}
+                        onClick={() => void perform(() => invoke("hang_up"))}
+                      >
+                        <PhoneOff size={25} />
+                      </button>
+                      <span>切断</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className={`call-button secondary ${phoneState.muted ? "selected" : ""}`}
+                      type="button"
+                      title={phoneState.muted ? "ミュート解除" : "ミュート"}
+                      disabled={busy || phoneState.call.phase !== "active"}
+                      onClick={() =>
+                        void perform(() =>
+                          invoke("set_muted", { muted: !phoneState.muted }),
+                        )
+                      }
+                    >
+                      {phoneState.muted ? (
+                        <MicOff size={24} />
+                      ) : (
+                        <Mic size={24} />
+                      )}
+                    </button>
+                    <button
+                      className="call-button hangup"
+                      type="button"
+                      title="通話終了"
+                      disabled={busy}
+                      onClick={() => void perform(() => invoke("hang_up"))}
+                    >
+                      <PhoneOff size={25} />
+                    </button>
+                  </>
+                )
               ) : (
                 <button
                   className="call-button answer"
@@ -453,6 +688,13 @@ function App() {
                 </button>
               )}
             </div>
+            {platformInfo.isAndroid &&
+              androidAudioRouteEligible &&
+              audioRouteState.status === "error" && (
+                <p className="audio-route-inline-error" role="alert">
+                  {audioRouteState.error || "音声経路を利用できません"}
+                </p>
+              )}
 
             {(error || phoneState.lastError) && (
               <div className="error-message" role="alert">
@@ -740,13 +982,9 @@ function App() {
               </section>
             )}
 
-            <section>
-              <h2>音声デバイス</h2>
-              {platformInfo.isAndroid ? (
-                <p className="platform-note">
-                  通話時にAndroidの受話口、スピーカー、Bluetoothから選択します。
-                </p>
-              ) : (
+            {!platformInfo.isAndroid && (
+              <section>
+                <h2>音声デバイス</h2>
                 <>
                   <label>
                     <span className="label-with-icon">
@@ -773,8 +1011,8 @@ function App() {
                     </select>
                   </label>
                 </>
-              )}
-            </section>
+              </section>
+            )}
 
             {(error || phoneState.lastError) && (
               <div className="error-message" role="alert">
@@ -785,6 +1023,87 @@ function App() {
           </form>
         )}
       </section>
+
+      {platformInfo.isAndroid && (
+        <dialog
+          ref={audioRouteDialog}
+          className="audio-route-dialog"
+          aria-labelledby="audio-route-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            setAudioRouteOpen(false);
+          }}
+          onClose={() => setAudioRouteOpen(false)}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setAudioRouteOpen(false);
+            }
+          }}
+        >
+          <div className="audio-route-sheet">
+            <header>
+              <div>
+                <h2 id="audio-route-title">通話音声</h2>
+                <p>使用する音声経路を選択してください</p>
+              </div>
+              <button
+                className="audio-route-close"
+                type="button"
+                title="閉じる"
+                onClick={() => setAudioRouteOpen(false)}
+              >
+                <X size={22} />
+              </button>
+            </header>
+
+            <div className="audio-route-options">
+              {audioRouteState.routes.map((route) => {
+                const selected = route.id === audioRouteState.current?.id;
+                return (
+                  <button
+                    key={route.id}
+                    type="button"
+                    className={selected ? "selected" : ""}
+                    disabled={audioRouteBusy}
+                    onClick={() => void selectAudioRoute(route)}
+                  >
+                    <span className="audio-route-icon">
+                      {audioRouteIcon(route.type, 21)}
+                    </span>
+                    <span>
+                      <strong>{route.name}</strong>
+                      <small>{audioRouteTypeLabel(route.type)}</small>
+                    </span>
+                    {selected && <Check size={21} aria-label="選択中" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {audioRouteState.bluetoothPermission === "denied" && (
+              <div className="audio-route-permission">
+                <p>
+                  Bluetooth機器を使うには「付近のデバイス」を許可してください。
+                </p>
+                <button
+                  type="button"
+                  disabled={audioRouteBusy}
+                  onClick={() => void openBluetoothAudioSettings()}
+                >
+                  <ExternalLink size={17} />
+                  Android設定を開く
+                </button>
+              </div>
+            )}
+
+            {(audioRouteError || audioRouteState.error) && (
+              <p className="audio-route-error" role="alert">
+                {audioRouteError || audioRouteState.error}
+              </p>
+            )}
+          </div>
+        </dialog>
+      )}
 
       <nav className="bottom-nav" aria-label="メイン">
         <button

@@ -13,6 +13,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 
 class MainActivity : TauriActivity() {
   private var audioPermissionCallback: ((Boolean) -> Unit)? = null
+  private var bluetoothPermissionCallback: ((Boolean) -> Unit)? = null
   private var notificationPermissionCallback: ((Boolean) -> Unit)? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,6 +47,48 @@ class MainActivity : TauriActivity() {
     requestPermissions(
       arrayOf(Manifest.permission.POST_NOTIFICATIONS),
       NOTIFICATION_PERMISSION_REQUEST,
+    )
+  }
+
+  internal fun bluetoothPermissionStatus(): String {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return "unavailable"
+    if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
+      PackageManager.PERMISSION_GRANTED
+    ) {
+      return "granted"
+    }
+    return if (getSharedPreferences(AUDIO_ROUTE_PREFERENCES, MODE_PRIVATE)
+        .getBoolean(BLUETOOTH_PERMISSION_REQUESTED, false)
+    ) {
+      "denied"
+    } else {
+      "notRequested"
+    }
+  }
+
+  internal fun requestBluetoothPermission(callback: (Boolean) -> Unit) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+      checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
+      PackageManager.PERMISSION_GRANTED
+    ) {
+      callback(true)
+      return
+    }
+    if (bluetoothPermissionStatus() == "denied") {
+      callback(false)
+      return
+    }
+    bluetoothPermissionCallback = callback
+    requestPermissions(
+      arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
+      BLUETOOTH_PERMISSION_REQUEST,
+    )
+  }
+
+  internal fun openBluetoothPermissionSettings() {
+    startActivity(
+      Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+        .setData(Uri.parse("package:$packageName")),
     )
   }
 
@@ -84,6 +127,14 @@ class MainActivity : TauriActivity() {
         audioPermissionCallback?.invoke(granted)
         audioPermissionCallback = null
       }
+      BLUETOOTH_PERMISSION_REQUEST -> {
+        getSharedPreferences(AUDIO_ROUTE_PREFERENCES, MODE_PRIVATE)
+          .edit()
+          .putBoolean(BLUETOOTH_PERMISSION_REQUESTED, true)
+          .apply()
+        bluetoothPermissionCallback?.invoke(granted)
+        bluetoothPermissionCallback = null
+      }
       NOTIFICATION_PERMISSION_REQUEST -> {
         PushStateStore(applicationContext).markNotificationPermissionRequested()
         notificationPermissionCallback?.invoke(granted)
@@ -95,5 +146,8 @@ class MainActivity : TauriActivity() {
   private companion object {
     const val AUDIO_PERMISSION_REQUEST = 41_001
     const val NOTIFICATION_PERMISSION_REQUEST = 41_002
+    const val BLUETOOTH_PERMISSION_REQUEST = 41_003
+    const val AUDIO_ROUTE_PREFERENCES = "tsumuji_phone_audio_route"
+    const val BLUETOOTH_PERMISSION_REQUESTED = "bluetooth_permission_requested"
   }
 }

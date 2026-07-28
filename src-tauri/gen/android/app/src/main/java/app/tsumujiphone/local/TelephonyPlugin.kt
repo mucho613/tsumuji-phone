@@ -14,6 +14,7 @@ import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import org.json.JSONArray
 
 @InvokeArg
 internal class StartWaitingArgs {
@@ -26,6 +27,11 @@ internal class StartWaitingArgs {
 internal class PairPushGatewayArgs {
   lateinit var gatewayUrl: String
   lateinit var pairingCode: String
+}
+
+@InvokeArg
+internal class AudioRouteArgs {
+  lateinit var routeId: String
 }
 
 @TauriPlugin
@@ -65,6 +71,60 @@ class TelephonyPlugin(private val activity: Activity) : Plugin(activity) {
   fun getStatus(invoke: Invoke) {
     withService(invoke) { connectedService ->
       invoke.resolve(connectedService.getStatus().toJson())
+    }
+  }
+
+  @Command
+  fun getAudioRouteState(invoke: Invoke) {
+    val mainActivity = activity as? MainActivity
+    if (mainActivity == null) {
+      invoke.reject("音声経路を確認できませんでした")
+      return
+    }
+    val permissionStatus = mainActivity.bluetoothPermissionStatus()
+    withService(invoke) { connectedService ->
+      invoke.resolve(
+        connectedService
+          .getAudioRouteState(permissionStatus == "granted")
+          .toJson(permissionStatus),
+      )
+    }
+  }
+
+  @Command
+  fun requestBluetoothAudioPermission(invoke: Invoke) {
+    val mainActivity = activity as? MainActivity
+    if (mainActivity == null) {
+      invoke.reject("Bluetooth権限を確認できませんでした")
+      return
+    }
+    mainActivity.requestBluetoothPermission {
+      invoke.resolve()
+    }
+  }
+
+  @Command
+  fun openBluetoothAudioSettings(invoke: Invoke) {
+    val mainActivity = activity as? MainActivity
+    if (mainActivity == null) {
+      invoke.reject("Bluetooth権限の設定を開けませんでした")
+      return
+    }
+    mainActivity.openBluetoothPermissionSettings()
+    invoke.resolve()
+  }
+
+  @Command
+  fun setAudioRoute(invoke: Invoke) {
+    val args = invoke.parseArgs(AudioRouteArgs::class.java)
+    withService(invoke) { connectedService ->
+      connectedService.requestAudioRoute(args.routeId) { error ->
+        if (error == null) {
+          invoke.resolve()
+        } else {
+          invoke.reject(error)
+        }
+      }
     }
   }
 
@@ -216,5 +276,19 @@ class TelephonyPlugin(private val activity: Activity) : Plugin(activity) {
     put("lastPushRegisteredAt", push.lastRegisteredAt)
     put("lastPushDurationMillis", push.lastDurationMillis)
     put("lastPushError", push.lastError)
+  }
+
+  private fun AndroidAudioRouteState.toJson(bluetoothPermission: String) = JSObject().apply {
+    put("status", status)
+    put("current", current?.toJson())
+    put("routes", JSONArray(routes.map { route -> route.toJson() }))
+    put("bluetoothPermission", bluetoothPermission)
+    put("error", error)
+  }
+
+  private fun AndroidAudioRoute.toJson() = JSObject().apply {
+    put("id", id)
+    put("name", name)
+    put("type", type)
   }
 }

@@ -27,13 +27,16 @@ import androidx.core.app.ServiceCompat
 import androidx.core.telecom.CallAttributesCompat
 import androidx.core.telecom.CallControlResult
 import androidx.core.telecom.CallControlScope
+import androidx.core.telecom.CallEndpointCompat
 import androidx.core.telecom.CallsManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 internal enum class AndroidWaitingState(val wireName: String) {
   STOPPED("stopped"),
@@ -50,6 +53,19 @@ internal data class AndroidPlatformStatus(
   val savedServer: String?,
   val savedUserId: String?,
   val lastError: String?,
+)
+
+internal data class AndroidAudioRoute(
+  val id: String,
+  val name: String,
+  val type: String,
+)
+
+internal data class AndroidAudioRouteState(
+  val status: String,
+  val current: AndroidAudioRoute?,
+  val routes: List<AndroidAudioRoute>,
+  val error: String?,
 )
 
 class TelephonyService : Service() {
@@ -71,6 +87,16 @@ class TelephonyService : Service() {
     }
   }
   private val pushDeadline = Runnable { finishPushWake() }
+  private val audioRouteDeadline = Runnable {
+    if (NativeTelephony.nativeHasActiveCall() && !audioRouteReady) {
+      Log.w(
+        TAG,
+        "Audio route preparation timed out: current=${currentAudioEndpoint != null} " +
+          "availableCount=${availableAudioEndpoints.size}",
+      )
+      audioRouteError = "音声経路を準備できませんでした"
+    }
+  }
   private lateinit var credentialStore: AndroidCredentialStore
   private lateinit var pushStore: PushStateStore
   private lateinit var callsManager: CallsManager
@@ -95,6 +121,10 @@ class TelephonyService : Service() {
   private var observedCallDirection = "none"
   private var observedCallPhase = "none"
   private var observedCallPeer = ""
+  private var currentAudioEndpoint: CallEndpointCompat? = null
+  private var availableAudioEndpoints = emptyList<CallEndpointCompat>()
+  private var audioRouteReady = false
+  private var audioRouteError: String? = null
   private var status = AndroidPlatformStatus(
     state = AndroidWaitingState.STOPPED,
     tailscaleAddress = null,
@@ -145,8 +175,10 @@ class TelephonyService : Service() {
 
   override fun onDestroy() {
     handler.removeCallbacks(pushDeadline)
+    handler.removeCallbacks(audioRouteDeadline)
     stopMonitor()
     cancelCallNotification()
+    clearAudioRouteState()
     telecomCoroutineScope.cancel()
     stopNativeForServiceShutdown()
     super.onDestroy()
@@ -157,6 +189,73 @@ class TelephonyService : Service() {
   }
 
   internal fun getStatus(): AndroidPlatformStatus = status.withSavedSettings()
+
+  internal fun getAudioRouteState(
+    bluetoothPermissionGranted: Boolean,
+  ): AndroidAudioRouteState {
+    if (!NativeTelephony.nativeHasActiveCall()) {
+      return AndroidAudioRouteState("inactive", null, emptyList(), null)
+    }
+    val current = currentAudioEndpoint?.toAudioRoute(bluetoothPermissionGranted)
+    val visibleRoutes = availableAudioEndpoints
+      .filter { endpoint ->
+        endpoint.type != CallEndpointCompat.TYPE_BLUETOOTH || bluetoothPermissionGranted
+      }
+      .filter { endpoint ->
+        endpoint.type != CallEndpointCompat.TYPE_UNKNOWN ||
+          endpoint.identifier == currentAudioEndpoint?.identifier
+      }
+      .map { endpoint -> endpoint.toAudioRoute(bluetoothPermissionGranted) }
+      .toMutableList()
+    if (currentAudioEndpoint?.type == CallEndpointCompat.TYPE_UNKNOWN &&
+      visibleRoutes.none { route -> route.id == current?.id } &&
+      current != null
+    ) {
+      visibleRoutes += current
+    }
+    val routeStatus = when {
+      audioRouteReady -> "ready"
+      audioRouteError != null -> "error"
+      else -> "preparing"
+    }
+    return AndroidAudioRouteState(routeStatus, current, visibleRoutes, audioRouteError)
+  }
+
+  internal fun requestAudioRoute(
+    routeId: String,
+    completion: (String?) -> Unit,
+  ) {
+    val control = telecomCallControl
+    if (control == null) {
+      completion("音声経路はまだ準備中です")
+      return
+    }
+    val endpoint = availableAudioEndpoints.firstOrNull {
+      it.identifier.toString() == routeId
+    }
+    if (endpoint == null) {
+      completion("選択した音声経路は現在利用できません")
+      return
+    }
+    audioRouteError = null
+    telecomCoroutineScope.launch {
+      val error = runCatching {
+        withTimeout(AUDIO_ROUTE_REQUEST_TIMEOUT_MILLIS) {
+          when (control.requestEndpointChange(endpoint)) {
+            is CallControlResult.Success -> null
+            is CallControlResult.Error -> "音声経路を切り替えられませんでした"
+          }
+        }
+      }.fold(
+        onSuccess = { it },
+        onFailure = { "音声経路の切り替えがタイムアウトしました" },
+      )
+      if (error != null) {
+        audioRouteError = error
+      }
+      completion(error)
+    }
+  }
 
   internal fun startWaiting(
     server: String,
@@ -437,7 +536,11 @@ class TelephonyService : Service() {
       Log.i(TAG, "Native call changed: direction=$direction phase=$phase")
     }
     if (direction != "none") {
-      if (observedCallDirection == "none") {
+      if (observedCallDirection == "none" ||
+        (telecomCallJob == null &&
+          telecomCallControl == null &&
+          !telecomRegistrationFailed)
+      ) {
         beginTelecomCall(direction, peer)
       }
       if (telecomCallControl != null &&
@@ -460,6 +563,7 @@ class TelephonyService : Service() {
     } else if (observedCallDirection != "none") {
       requestTelecomDisconnect(DisconnectCause(DisconnectCause.REMOTE))
       cancelCallNotification()
+      clearAudioRouteState()
       if (!pushWakeActive && telecomCallJob == null) {
         stopSelf()
       }
@@ -475,8 +579,16 @@ class TelephonyService : Service() {
   }
 
   private fun beginTelecomCall(direction: String, peer: String) {
-    if (telecomCallJob != null || telecomRegistrationFailed) return
+    if (telecomCallJob != null || telecomRegistrationFailed) {
+      Log.w(
+        TAG,
+        "Core Telecom call was not started: jobActive=${telecomCallJob != null} " +
+          "registrationFailed=$telecomRegistrationFailed",
+      )
+      return
+    }
 
+    prepareAudioRouteState()
     startService(
       Intent(this, TelephonyService::class.java).setAction(ACTION_CALL_ACTIVE),
     )
@@ -498,6 +610,7 @@ class TelephonyService : Service() {
 
     telecomCallJob = telecomCoroutineScope.launch {
       try {
+        Log.i(TAG, "Adding $direction call to Core Telecom")
         callsManager.addCall(
           attributes,
           onAnswer = {
@@ -525,7 +638,26 @@ class TelephonyService : Service() {
             throw UnsupportedOperationException("保留には対応していません")
           },
         ) {
+          Log.i(TAG, "Core Telecom call control is ready")
           telecomCallControl = this
+          launch {
+            currentCallEndpoint.collect { endpoint ->
+              Log.i(TAG, "Current audio endpoint updated: type=${endpoint.type}")
+              currentAudioEndpoint = endpoint
+              updateAudioRouteReadiness()
+            }
+          }
+          launch {
+            availableEndpoints.collect { endpoints ->
+              Log.i(
+                TAG,
+                "Available audio endpoints updated: count=${endpoints.size} " +
+                  "types=${endpoints.map { endpoint -> endpoint.type }.distinct().sorted()}",
+              )
+              availableAudioEndpoints = endpoints
+              updateAudioRouteReadiness()
+            }
+          }
           showCallNotification(
             NativeTelephony.nativeCallDirection(),
             NativeTelephony.nativeCallPhase(),
@@ -542,20 +674,22 @@ class TelephonyService : Service() {
             removePushForeground()
           }
           pendingTelecomDisconnectCause?.let { cause ->
-            launch {
-              disconnect(cause)
-            }
+            disconnectTelecomCall(this, cause)
           }
         }
+      } catch (_: CancellationException) {
+        Log.i(TAG, "Core Telecom call control cancelled after disconnect")
       } catch (error: Exception) {
         telecomRegistrationFailed = true
         Log.e(TAG, "Core Telecom rejected the call", error)
       } finally {
+        Log.i(TAG, "Core Telecom call control finished")
         telecomCallControl = null
         telecomCallJob = null
         telecomDisconnectRequested = false
         pendingTelecomDisconnectCause = null
         if (NativeTelephony.nativeCallDirection() == "none") {
+          clearAudioRouteState()
           cancelCallNotification()
           if (!pushWakeActive) {
             stopSelf()
@@ -629,8 +763,29 @@ class TelephonyService : Service() {
     telecomDisconnectRequested = true
     pendingTelecomDisconnectCause = cause
     val control = telecomCallControl ?: return
+    disconnectTelecomCall(control, cause)
+  }
+
+  private fun disconnectTelecomCall(
+    control: CallControlScope,
+    cause: DisconnectCause,
+  ) {
+    val callJob = telecomCallJob
     telecomCoroutineScope.launch {
-      control.disconnect(cause)
+      try {
+        val result = withTimeout(TELECOM_DISCONNECT_TIMEOUT_MILLIS) {
+          control.disconnect(cause)
+        }
+        if (result is CallControlResult.Error) {
+          Log.w(TAG, "Core Telecom disconnect returned an error")
+        }
+      } catch (error: Exception) {
+        Log.w(TAG, "Core Telecom disconnect did not complete normally", error)
+      } finally {
+        // Core Telecom may destroy the platform call without completing addCall().
+        // Cancelling its owner prevents a stale call scope from blocking redial.
+        callJob?.cancel()
+      }
     }
   }
 
@@ -649,6 +804,58 @@ class TelephonyService : Service() {
     if (error != null) {
       throw IllegalStateException(error)
     }
+  }
+
+  private fun prepareAudioRouteState() {
+    handler.removeCallbacks(audioRouteDeadline)
+    currentAudioEndpoint = null
+    availableAudioEndpoints = emptyList()
+    audioRouteReady = false
+    audioRouteError = null
+    handler.postDelayed(audioRouteDeadline, AUDIO_ROUTE_READY_TIMEOUT_MILLIS)
+  }
+
+  private fun updateAudioRouteReadiness() {
+    if (currentAudioEndpoint != null && availableAudioEndpoints.isNotEmpty()) {
+      audioRouteReady = true
+      audioRouteError = null
+      handler.removeCallbacks(audioRouteDeadline)
+    }
+  }
+
+  private fun clearAudioRouteState() {
+    handler.removeCallbacks(audioRouteDeadline)
+    currentAudioEndpoint = null
+    availableAudioEndpoints = emptyList()
+    audioRouteReady = false
+    audioRouteError = null
+  }
+
+  private fun CallEndpointCompat.toAudioRoute(
+    bluetoothPermissionGranted: Boolean,
+  ): AndroidAudioRoute {
+    val routeType = when (type) {
+      CallEndpointCompat.TYPE_EARPIECE -> "earpiece"
+      CallEndpointCompat.TYPE_BLUETOOTH -> "bluetooth"
+      CallEndpointCompat.TYPE_WIRED_HEADSET -> "wired"
+      CallEndpointCompat.TYPE_SPEAKER -> "speaker"
+      CallEndpointCompat.TYPE_STREAMING -> "streaming"
+      else -> "unknown"
+    }
+    val fallbackName = when (routeType) {
+      "earpiece" -> "受話口"
+      "bluetooth" -> "Bluetooth"
+      "wired" -> "有線ヘッドセット"
+      "speaker" -> "スピーカー"
+      "streaming" -> "外部デバイス"
+      else -> "その他"
+    }
+    val endpointName = if (routeType == "bluetooth" && !bluetoothPermissionGranted) {
+      fallbackName
+    } else {
+      name.toString().trim().takeIf(String::isNotEmpty) ?: fallbackName
+    }
+    return AndroidAudioRoute(identifier.toString(), endpointName, routeType)
   }
 
   private fun failPushWake(message: String) {
@@ -1034,6 +1241,9 @@ class TelephonyService : Service() {
     private const val RECOVERY_TIMEOUT_MILLIS = 60_000L
     private const val PUSH_LIFETIME_MILLIS = 30_000L
     private const val ACTIVE_CALL_CHECK_INTERVAL_MILLIS = 1_000L
+    private const val AUDIO_ROUTE_READY_TIMEOUT_MILLIS = 5_000L
+    private const val AUDIO_ROUTE_REQUEST_TIMEOUT_MILLIS = 5_000L
+    private const val TELECOM_DISCONNECT_TIMEOUT_MILLIS = 5_000L
     private const val PUSH_ACTIVE_CHANNEL = "push_wake_active"
     private const val PUSH_FAILURE_CHANNEL = "push_wake_failure"
     private const val CALL_INCOMING_CHANNEL = "incoming_calls_v1"

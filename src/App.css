@@ -231,6 +231,29 @@ h1 {
   gap: 34px;
 }
 
+.android-call-controls {
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.call-control-item {
+  display: grid;
+  width: 70px;
+  place-items: center;
+  gap: 6px;
+  color: #536660;
+  font-size: 11px;
+  line-height: 14px;
+  text-align: center;
+}
+
+.call-control-item > span {
+  overflow: hidden;
+  width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .call-button {
   display: grid;
   place-items: center;
@@ -266,6 +289,163 @@ h1 {
 .secondary.selected {
   color: #ffffff;
   background: #9f4039;
+}
+
+.audio-route-dialog {
+  width: min(100%, 400px);
+  max-width: none;
+  margin: auto auto 0;
+  padding: 0;
+  color: #172421;
+  background: transparent;
+  border: 0;
+}
+
+.audio-route-dialog::backdrop {
+  background: rgb(13 28 24 / 42%);
+}
+
+.audio-route-sheet {
+  padding: 18px 18px 22px;
+  background: #f8fbfa;
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -5px 22px rgb(15 42 34 / 18%);
+}
+
+.audio-route-sheet > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.audio-route-sheet h2 {
+  margin: 0;
+  color: #203c35;
+  font-size: 17px;
+}
+
+.audio-route-sheet header p {
+  margin: 4px 0 0;
+  color: #657872;
+  font-size: 12px;
+}
+
+.audio-route-close {
+  display: grid;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  place-items: center;
+  color: #445b55;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.audio-route-close:active {
+  background: #e3ece8;
+}
+
+.audio-route-options {
+  display: grid;
+  gap: 7px;
+}
+
+.audio-route-options > button {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 7px 12px;
+  color: #233d37;
+  text-align: left;
+  background: #ffffff;
+  border: 1px solid #c9d5d1;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.audio-route-options > button.selected {
+  color: #0d6844;
+  background: #edf8f2;
+  border-color: #63a98b;
+}
+
+.audio-route-options > button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.audio-route-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  background: #e7efec;
+  border-radius: 50%;
+}
+
+.audio-route-options strong,
+.audio-route-options small {
+  display: block;
+}
+
+.audio-route-options strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.audio-route-options small {
+  margin-top: 2px;
+  color: #687b75;
+  font-size: 10px;
+}
+
+.audio-route-permission {
+  margin-top: 12px;
+  padding: 10px;
+  color: #4c615b;
+  background: #edf2f0;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.audio-route-permission p {
+  margin: 0 0 8px;
+}
+
+.audio-route-permission button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  color: #ffffff;
+  background: #356f5d;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.audio-route-error {
+  margin: 12px 0 0;
+  color: #982923;
+  font-size: 12px;
+}
+
+.audio-route-inline-error {
+  margin: -4px auto 0;
+  color: #982923;
+  font-size: 11px;
+  text-align: center;
 }
 
 .error-message {

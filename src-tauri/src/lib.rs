@@ -9,13 +9,19 @@ use std::{
     collections::BTreeSet,
     net::{IpAddr, Ipv4Addr},
 };
-use tauri::State;
+#[cfg(target_os = "android")]
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    thread,
+    time::Duration,
+};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager,
+    AppHandle,
 };
+use tauri::{Manager, State};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use telephony_core::AccountConfig;
 use telephony_core::{PhoneSnapshot, TelephonyEngine};
@@ -307,6 +313,64 @@ async fn open_full_screen_intent_settings(
 
 #[tauri::command]
 #[cfg(any(target_os = "linux", target_os = "windows"))]
+fn get_audio_route_state() -> Result<(), String> {
+    Err("通話音声経路はAndroid版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn get_audio_route_state(
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<android_platform::AndroidAudioRouteState, String> {
+    platform.audio_route_state()
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn request_bluetooth_audio_permission() -> Result<(), String> {
+    Err("Bluetooth通話音声はAndroid版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn request_bluetooth_audio_permission(
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<(), String> {
+    platform.request_bluetooth_audio_permission()
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn open_bluetooth_audio_settings() -> Result<(), String> {
+    Err("Bluetooth通話音声はAndroid版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn open_bluetooth_audio_settings(
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<(), String> {
+    platform.open_bluetooth_audio_settings()
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn set_audio_route(route_id: String) -> Result<(), String> {
+    let _ = route_id;
+    Err("通話音声経路はAndroid版でのみ使用できます".into())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn set_audio_route(
+    route_id: String,
+    platform: State<'_, android_platform::AndroidPlatform>,
+) -> Result<(), String> {
+    platform.set_audio_route(route_id)
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn pair_push_gateway(request: PairPushGatewayRequest) -> Result<(), String> {
     let _ = (request.gateway_url, request.pairing_code);
     Err("Push gatewayとのペアリングはAndroid版でのみ使用できます".into())
@@ -522,25 +586,68 @@ pub fn run() {
                 let _ = window.hide();
             }
         });
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        get_phone_state,
+        get_platform_info,
+        start_waiting,
+        stop_waiting,
+        reconnect,
+        dial,
+        answer,
+        reject,
+        hang_up,
+        send_dtmf,
+        set_muted,
+        reset_credentials,
+        request_push_permission,
+        open_push_notification_settings,
+        open_full_screen_intent_settings,
+        get_audio_route_state,
+        request_bluetooth_audio_permission,
+        open_bluetooth_audio_settings,
+        set_audio_route,
+        pair_push_gateway
+    ]);
+    #[cfg(target_os = "android")]
+    {
+        let app = builder
+            .build(tauri::generate_context!())
+            .expect("error while building tauri application");
+        let cleanup_started = Arc::new(AtomicBool::new(false));
+        let exit_allowed = Arc::new(AtomicBool::new(false));
+        app.run(move |app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if exit_allowed.load(Ordering::Acquire) {
+                    return;
+                }
+                let has_call = app_handle
+                    .state::<Controller>()
+                    .engine
+                    .lock()
+                    .is_ok_and(|engine| engine.snapshot().call.is_some());
+                if !has_call {
+                    return;
+                }
+
+                api.prevent_exit();
+                if cleanup_started.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                if let Ok(mut engine) = app_handle.state::<Controller>().engine.lock() {
+                    let _ = engine.hang_up();
+                }
+                let app_handle = app_handle.clone();
+                let exit_allowed = Arc::clone(&exit_allowed);
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_secs(1));
+                    exit_allowed.store(true, Ordering::Release);
+                    app_handle.exit(0);
+                });
+            }
+        });
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     builder
-        .invoke_handler(tauri::generate_handler![
-            get_phone_state,
-            get_platform_info,
-            start_waiting,
-            stop_waiting,
-            reconnect,
-            dial,
-            answer,
-            reject,
-            hang_up,
-            send_dtmf,
-            set_muted,
-            reset_credentials,
-            request_push_permission,
-            open_push_notification_settings,
-            open_full_screen_intent_settings,
-            pair_push_gateway
-        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

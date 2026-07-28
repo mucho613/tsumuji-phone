@@ -169,6 +169,24 @@ foreground 実行優先度に加え、応答後はマイク／通話型 foregrou
 同じ通知を維持します。これにより Activity を前面へ出さず、30秒を超える通話でも
 process とバックグラウンド音声を維持します。
 
+通話中に Android のタスク一覧から Activity が削除されると、Tauri の
+`RunEvent::ExitRequested` で通常終了を一時保留します。Rust/PJSIP engine へ切断を
+要求し、Service が native call の終了を検出して Core Telecom と CallStyle 通知を
+終了する処理に1秒の猶予を与えてから、プロセスを終了します。通話がない場合は
+終了を保留しません。これは OS 設定から行う「強制停止」とは区別します。
+
+通話音声の経路は `AudioManager` で直接変更せず、通話ごとの
+`CallControlScope.currentCallEndpoint` と `availableEndpoints` を Service が監視し、
+`requestEndpointChange` で切り替えます。Tauri UI は Service が保持する現在経路と
+候補を通話中だけ監視し、Activity の再表示時も実状態を取得し直します。通話終了時は
+経路状態を破棄し、次の通話へ選択を引き継ぎません。
+
+Android 12 以上の `BLUETOOTH_CONNECT` は、ユーザーが初めて通話画面の音声経路一覧を
+開いたときだけ要求します。拒否時は Bluetooth の候補を除外して受話口、スピーカー、
+有線経路を維持し、再許可はアプリ詳細設定から行います。Bluetooth 機器名は経路選択
+画面だけへ返し、Rust、永続ストア、ログ、Push gateway へ渡しません。経路準備と変更
+要求は5秒で打ち切り、自動再試行せず Android が選んだ現在経路を維持します。
+
 端末再起動後もアプリを開く前に SIP 経路を利用できるよう、Tailscale は Android の
 「常時接続 VPN」として自動起動させます。VPN 外の通信をブロックする設定は
 アーキテクチャ上の必須条件としません。

@@ -46,6 +46,25 @@ pub struct AndroidStatus {
     last_error: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AndroidAudioRoute {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub route_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AndroidAudioRouteState {
+    pub status: String,
+    pub current: Option<AndroidAudioRoute>,
+    pub routes: Vec<AndroidAudioRoute>,
+    pub bluetooth_permission: String,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum AndroidWaitingState {
@@ -69,6 +88,12 @@ struct StartWaitingPayload {
 struct PairPushGatewayPayload {
     gateway_url: String,
     pairing_code: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioRoutePayload {
+    route_id: String,
 }
 
 impl AndroidStatus {
@@ -162,6 +187,30 @@ impl AndroidPlatform {
                     pairing_code,
                 },
             )
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn audio_route_state(&self) -> Result<AndroidAudioRouteState, String> {
+        self.0
+            .run_mobile_plugin("getAudioRouteState", ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn request_bluetooth_audio_permission(&self) -> Result<(), String> {
+        self.0
+            .run_mobile_plugin::<()>("requestBluetoothAudioPermission", ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn open_bluetooth_audio_settings(&self) -> Result<(), String> {
+        self.0
+            .run_mobile_plugin::<()>("openBluetoothAudioSettings", ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn set_audio_route(&self, route_id: String) -> Result<(), String> {
+        self.0
+            .run_mobile_plugin::<()>("setAudioRoute", AudioRoutePayload { route_id })
             .map_err(|error| error.to_string())
     }
 }
