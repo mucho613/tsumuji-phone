@@ -444,6 +444,9 @@ function App() {
       : audioRouteState.status === "error"
         ? "音声エラー"
         : audioRouteTypeLabel(audioRouteState.current?.type ?? "unknown");
+  const dtmfAvailable =
+    phoneState.call?.phase === "connecting" ||
+    phoneState.call?.phase === "active";
 
   async function perform(action: () => Promise<PhoneState>) {
     setBusy(true);
@@ -460,8 +463,12 @@ function App() {
   }
 
   function pressKey(digit: string) {
-    if (phoneState.call?.phase === "active") {
-      invoke("send_dtmf", { digit }).catch((reason) => setError(String(reason)));
+    if (phoneState.call) {
+      if (dtmfAvailable) {
+        invoke("send_dtmf", { digit }).catch((reason) =>
+          setError(String(reason)),
+        );
+      }
       return;
     }
     if (number.length < 32) setNumber((current) => `${current}${digit}`);
@@ -653,7 +660,13 @@ function App() {
 
       <section className="content">
         {tab === "phone" ? (
-          <div className="dialer">
+          <div
+            className={`dialer ${
+              phoneState.call?.phase === "ringing"
+                ? "incoming-dialer"
+                : ""
+            }`}
+          >
             <div className="number-area">
               {phoneState.call ? (
                 <div>
@@ -698,19 +711,27 @@ function App() {
               )}
             </div>
 
-            <div className="keypad" aria-label="ダイヤルキー">
-              {keys.map(([digit, letters]) => (
-                <button
-                  key={digit}
-                  type="button"
-                  className="key"
-                  onClick={() => pressKey(digit)}
-                >
-                  <span>{digit}</span>
-                  <small>{letters || "\u00a0"}</small>
-                </button>
-              ))}
-            </div>
+            {phoneState.call?.phase !== "ringing" && (
+              <div className="keypad" aria-label="ダイヤルキー">
+                {keys.map(([digit, letters]) => (
+                  <button
+                    key={digit}
+                    type="button"
+                    className="key"
+                    aria-label={
+                      dtmfAvailable
+                        ? `${digit}をDTMF送信`
+                        : digit
+                    }
+                    disabled={phoneState.call !== null && !dtmfAvailable}
+                    onClick={() => pressKey(digit)}
+                  >
+                    <span>{digit}</span>
+                    <small>{letters || "\u00a0"}</small>
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div
               className={`call-controls ${platformInfo.isAndroid ? "android-call-controls" : ""}`}

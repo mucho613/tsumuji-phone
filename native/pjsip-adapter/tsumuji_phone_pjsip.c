@@ -1,5 +1,6 @@
 #include "tsumuji_phone_pjsip.h"
 
+#include <pjsip/sip_config.h>
 #include <pjsua-lib/pjsua.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -251,6 +252,12 @@ int tp_engine_start(const tp_config *config,
         tp_fail(engine, status, "pjsua_create");
         goto fail;
     }
+
+    /* Some PSTN services provide their announcement entirely as early media
+     * and never answer the SIP dialog with a final 2xx response. Keep that
+     * usable INVITE session alive after the transaction timer expires; the
+     * user can still end it explicitly through pjsua_call_hangup(). */
+    pjsip_cfg()->endpt.keep_inv_after_tsx_timeout = PJ_TRUE;
 
     pjsua_config_default(&user_agent_config);
     user_agent_config.max_calls = 1;
